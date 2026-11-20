@@ -1,0 +1,16 @@
+{
+  "name": "sprint-pulse-demo-app",
+  "version": "1.0.0",
+  "description": "Sprint Pulse — Zero-dependency 375px mobile-first sprint pipeline task tracker",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "lint": "node scripts/lint.mjs",
+    "test": "node --test tests",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/serve.mjs"
+  }
+}
