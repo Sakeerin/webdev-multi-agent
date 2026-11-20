@@ -8,6 +8,14 @@ skills:
   - frontend-ui-engineering
   - impeccable
   - incremental-implementation
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - run_command
+  - call_mcp_tool
+  - list_resources
+  - read_resource
 ---
 
 # Sub-Agent: `web-dev`

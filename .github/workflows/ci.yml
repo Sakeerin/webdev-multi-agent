@@ -1,0 +1,54 @@
+name: CI Quality Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gates:
+    name: Lint, Test, Build & Secret Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: demo-app
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check no .env secret files are tracked
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          tracked_env="$(git ls-files '*.env' '.env*' '**/.env*' ':!.env.example' ':!**/.env.example')"
+          if [ -n "$tracked_env" ]; then
+            echo "::error::Tracked .env secret file(s) detected:"
+            echo "$tracked_env"
+            exit 1
+          fi
+          echo "OK: No tracked .env secret files found."
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build

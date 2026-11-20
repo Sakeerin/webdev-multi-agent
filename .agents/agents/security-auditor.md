@@ -7,6 +7,9 @@ description: >-
 skills:
   - security-and-hardening
   - firebase-security-rules-auditor
+tools:
+  - read_file
+  - run_command
 ---
 
 # Sub-Agent: `security-auditor`
