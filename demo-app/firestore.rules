@@ -1,0 +1,76 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function isOwner(ownerId) {
+      return isSignedIn() && request.auth.uid == ownerId;
+    }
+
+    function isValidStage(stage) {
+      return stage is string
+        && stage in ['Plan', 'Design', 'Build', 'Verify', 'Secure', 'Ship'];
+    }
+
+    function isValidPriority(priority) {
+      return priority is string
+        && priority in ['Low', 'Medium', 'High'];
+    }
+
+    function isValidTaskDocument(data) {
+      return data.keys().hasOnly([
+          'title',
+          'stage',
+          'priority',
+          'completed',
+          'ownerId',
+          'createdAt'
+        ])
+        && data.keys().hasAll([
+          'title',
+          'stage',
+          'priority',
+          'completed',
+          'ownerId',
+          'createdAt'
+        ])
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 80
+        && data.title.trim().size() >= 1
+        && isValidStage(data.stage)
+        && isValidPriority(data.priority)
+        && data.completed is bool
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isOwner(resource.data.ownerId);
+
+      allow create: if isSignedIn()
+        && isValidTaskDocument(request.resource.data)
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if isOwner(resource.data.ownerId)
+        && isValidTaskDocument(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['title', 'stage', 'priority', 'completed']);
+
+      allow delete: if isOwner(resource.data.ownerId);
+    }
+
+    // Default-deny fallback for all unmatched paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
