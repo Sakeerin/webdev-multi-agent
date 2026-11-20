@@ -7,6 +7,11 @@ description: >-
 skills:
   - ci-cd-and-automation
   - shipping-and-launch
+tools:
+  - read_file
+  - write_file
+  - edit_file
+  - run_command
 ---
 
 # Sub-Agent: `devops`

@@ -42,7 +42,7 @@
 | # | Stage | Owner | Task Details | Status | Proof |
 | :--- | :--- | :--- | :--- | :---: | :--- |
 | 1 | Plan | Main Agent | Initialize git repo & write `PLAN.md` | [x] | `PLAN.md` |
-| 2 | Design | `web-dev` | Create `375px` mobile-first spec in `demo-app/DESIGN_SPEC.md` | [ ] | Pending |
+| 2 | Design | `web-dev` | Create `375px` mobile-first spec in `demo-app/DESIGN_SPEC.md` | [x] | `demo-app/DESIGN_SPEC.md` (`47d4319`) |
 | 3 | Build | `web-dev` | Build `demo-app/` incrementally with tests first & small commits | [ ] | Pending |
 | 4 | Verify | `tester` | Run tests + `chrome-devtools-mcp` mobile/desktop checks & CWV | [ ] | Pending |
 | 5 | Secure | `security-auditor` | Audit app code, server headers, deps, and `firestore.rules` | [ ] | Pending |
