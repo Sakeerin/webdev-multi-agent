@@ -12,6 +12,13 @@ const AUDITOR_FORBIDDEN_WRITE_TOOLS = new Set([
   'write_to_file',
   'replace_file_content',
 ]);
+const AUTO_INJECTED_DISALLOWED_TOOLS = new Set([
+  'call_mcp_tool',
+  'list_resources',
+  'read_resource',
+  'send_message',
+  'manage_task',
+]);
 
 function stripQuotes(value) {
   if (
@@ -157,14 +164,16 @@ export function validateWorkspace(rootDir) {
     }
   }
 
-  // 2. Validate CLAUDE.md
-  const claudeMdPath = path.join(rootDir, 'CLAUDE.md');
-  if (!existsSync(claudeMdPath)) {
-    errors.push('Missing cross-tool bridge file: CLAUDE.md.');
-  } else {
-    const claudeContent = readFileSync(claudeMdPath, 'utf8');
-    if (!claudeContent.includes('@AGENTS.md')) {
-      errors.push('CLAUDE.md must import @AGENTS.md.');
+  // 2. Validate cross-tool bridge files (CLAUDE.md & GEMINI.md)
+  for (const bridgeFile of ['CLAUDE.md', 'GEMINI.md']) {
+    const bridgePath = path.join(rootDir, bridgeFile);
+    if (!existsSync(bridgePath)) {
+      errors.push(`Missing cross-tool bridge file: ${bridgeFile}.`);
+    } else {
+      const bridgeContent = readFileSync(bridgePath, 'utf8');
+      if (!bridgeContent.includes('@AGENTS.md')) {
+        errors.push(`${bridgeFile} must import @AGENTS.md.`);
+      }
     }
   }
 
@@ -273,12 +282,21 @@ export function validateWorkspace(rootDir) {
 
       if (!Array.isArray(tools) || tools.length === 0) {
         errors.push(`Sub-agent "${stem}" must declare explicit frontmatter "tools".`);
-      } else if (name === 'security-auditor') {
-        const forbidden = tools.filter((tool) => AUDITOR_FORBIDDEN_WRITE_TOOLS.has(tool));
-        if (forbidden.length > 0) {
+      } else {
+        const autoInjected = tools.filter((tool) => AUTO_INJECTED_DISALLOWED_TOOLS.has(tool));
+        if (autoInjected.length > 0) {
           errors.push(
-            `Sub-agent "security-auditor" must remain read-only and cannot include write tools: ${forbidden.join(', ')}.`
+            `Sub-agent "${stem}" must not list auto-injected runtime/MCP tools in "tools" (Antigravity auto-injects them and listing them causes startup failure): ${autoInjected.join(', ')}.`
           );
+        }
+
+        if (name === 'security-auditor') {
+          const forbidden = tools.filter((tool) => AUDITOR_FORBIDDEN_WRITE_TOOLS.has(tool));
+          if (forbidden.length > 0) {
+            errors.push(
+              `Sub-agent "security-auditor" must remain read-only and cannot include write tools: ${forbidden.join(', ')}.`
+            );
+          }
         }
       }
 

@@ -12,8 +12,11 @@ Build maintainable, accessible, mobile-first web interfaces starting at `375px`.
 
 ## Steps
 
-1. **Inspect the Design Spec First**
-   - If a Stitch project/screen exists, retrieve its HTML/design system via `StitchMCP` before writing markup.
+1. **Inspect the Design Spec First (Source Priority)**
+   - Follow this strict priority order before writing markup:
+     1. **`StitchMCP` (First Choice)**: When a Stitch project or screen exists, retrieve its HTML/design system via `StitchMCP` first.
+     2. **Figma / Visual Mockup Reference**: Extract tokens, spacing, typography, and layout specs from provided designs or screenshots.
+     3. **Author `DESIGN_SPEC.md`**: When no external spec exists, write `DESIGN_SPEC.md` defining `375px` layout geometry, CSS tokens, WCAG AA contrast pairings, breakpoints, and UI states before implementing components.
    - Extract color tokens, typography scale, spacing rhythm, and component hierarchy.
 2. **Design 375px Mobile-First**
    - Author base styles for a `375px` viewport with zero horizontal overflow (`overflow-x` clean).

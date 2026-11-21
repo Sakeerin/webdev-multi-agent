@@ -29,3 +29,5 @@ Systematically review web application code, configuration, and dependencies befo
 - [ ] Every finding is categorized (`Critical`, `High`, `Medium`, `Low`) with exact `file:line` and remediation.
 - [ ] Zero `Critical` or `High` vulnerabilities remain for a `PASS` verdict.
 - [ ] Dependency audit output is attached to the report.
+
+See [references/owasp-web-checklist.md](./references/owasp-web-checklist.md) for detailed checks.
