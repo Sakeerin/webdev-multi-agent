@@ -39,6 +39,7 @@ function createValidFixture(rootDir) {
     ].join('\n')
   );
   writeFixtureFile(rootDir, 'CLAUDE.md', '@AGENTS.md\n');
+  writeFixtureFile(rootDir, 'GEMINI.md', '@AGENTS.md\n');
 
   writeFixtureFile(
     rootDir,
@@ -217,12 +218,24 @@ describe('validateWorkspace (fixture edge cases)', () => {
     assert.ok(fmRes.errors.some((e) => /frontmatter/i.test(e)));
   });
 
-  it('fails when CLAUDE.md does not include @AGENTS.md', () => {
+  it('fails when CLAUDE.md or GEMINI.md is missing or does not include @AGENTS.md', () => {
     const dir = makeFixture();
     writeFixtureFile(dir, 'CLAUDE.md', '# Custom rules only\n');
     const res = validateWorkspace(dir);
     assert.equal(res.ok, false);
     assert.ok(res.errors.some((e) => /@AGENTS\.md/.test(e)));
+
+    const missingGeminiDir = makeFixture();
+    unlinkSync(path.join(missingGeminiDir, 'GEMINI.md'));
+    const missingGeminiRes = validateWorkspace(missingGeminiDir);
+    assert.equal(missingGeminiRes.ok, false);
+    assert.ok(missingGeminiRes.errors.some((e) => /GEMINI\.md/.test(e)));
+
+    const badGeminiDir = makeFixture();
+    writeFixtureFile(badGeminiDir, 'GEMINI.md', '# Missing import\n');
+    const badGeminiRes = validateWorkspace(badGeminiDir);
+    assert.equal(badGeminiRes.ok, false);
+    assert.ok(badGeminiRes.errors.some((e) => /GEMINI\.md|@AGENTS\.md/.test(e)));
   });
 
   it('fails on sub-agent name mismatch or missing skill reference', () => {
@@ -334,5 +347,36 @@ describe('validateWorkspace (fixture edge cases)', () => {
     assert.equal(res.ok, true);
     assert.ok(res.warnings.length >= 1);
     assert.ok(res.warnings.some((w) => w.includes('orphan-helper')));
+  });
+
+  it('fails when any sub-agent declares auto-injected runtime or MCP tools in tools:', () => {
+    for (const disallowedTool of [
+      'call_mcp_tool',
+      'list_resources',
+      'read_resource',
+      'send_message',
+      'manage_task',
+    ]) {
+      const dir = makeFixture();
+      writeFixtureFile(
+        dir,
+        '.agents/agents/web-dev.md',
+        [
+          '---',
+          'name: web-dev',
+          'description: Uses auto-injected tool in frontmatter.',
+          'skills: [frontend-ui-engineering]',
+          `tools: [read_file, ${disallowedTool}]`,
+          '---',
+          'Body',
+        ].join('\n')
+      );
+      const res = validateWorkspace(dir);
+      assert.equal(res.ok, false, `Expected failure for ${disallowedTool}`);
+      assert.ok(
+        res.errors.some((e) => new RegExp(`${disallowedTool}|auto-injected`, 'i').test(e)),
+        `Expected error mentioning ${disallowedTool}`
+      );
+    }
   });
 });
