@@ -6,3 +6,6 @@ demo-app/dist/
 *.log
 .DS_Store
 Thumbs.db
+*.pem
+*.key
+*serviceAccount*.json

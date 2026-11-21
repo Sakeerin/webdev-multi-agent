@@ -2,6 +2,7 @@ export const STAGES = Object.freeze(['Plan', 'Design', 'Build', 'Verify', 'Secur
 export const PRIORITIES = Object.freeze(['Low', 'Medium', 'High']);
 export const FILTERS = Object.freeze(['All', 'Active', 'Done']);
 export const MAX_TITLE_LENGTH = 80;
+export const MAX_ID_LENGTH = 128;
 
 const STAGE_SET = new Set(STAGES);
 const PRIORITY_SET = new Set(PRIORITIES);
@@ -56,7 +57,7 @@ export function isValidTask(candidate) {
 
   const { id, title, stage, priority, completed, createdAt } = candidate;
 
-  if (typeof id !== 'string' || id.trim().length === 0 || id.length > 128) {
+  if (typeof id !== 'string' || id.trim().length === 0 || id.length > MAX_ID_LENGTH) {
     return false;
   }
 
@@ -99,7 +100,16 @@ export function createTask({
     throw new Error(validation.error);
   }
 
-  const taskId = typeof id === 'string' && id.trim().length > 0 ? id.trim() : generateTaskId();
+  let taskId;
+  if (typeof id === 'string' && id.trim().length > 0) {
+    const trimmedId = id.trim();
+    if (trimmedId.length > MAX_ID_LENGTH) {
+      throw new Error(`Task id must be ${MAX_ID_LENGTH} characters or fewer.`);
+    }
+    taskId = trimmedId;
+  } else {
+    taskId = generateTaskId();
+  }
   const timestamp =
     typeof createdAt === 'string' && !Number.isNaN(Date.parse(createdAt))
       ? createdAt
@@ -170,4 +180,38 @@ export function getProgressStats(tasks) {
   const active = total - completed;
   const percent = total === 0 ? 0 : Math.round((completed / total) * 100);
   return { total, completed, active, percent };
+}
+
+export function formatEmptyStateCopy({ totalTasks = 0, filter = 'All', query = '' } = {}) {
+  if (totalTasks === 0) {
+    return {
+      heading: 'No sprint tasks yet',
+      body: 'Add your first pipeline item to start tracking progress from Plan to Ship.',
+      actionLabel: 'Create First Task',
+      actionType: 'focus-composer',
+    };
+  }
+
+  const activeFilter = FILTER_SET.has(filter) ? filter : 'All';
+  const trimmedQuery = typeof query === 'string' ? query.trim() : '';
+
+  let body;
+  if (trimmedQuery.length > 0) {
+    body =
+      activeFilter === 'All'
+        ? `No tasks match "${trimmedQuery}".`
+        : `No ${activeFilter.toLowerCase()} tasks match "${trimmedQuery}".`;
+  } else {
+    body =
+      activeFilter === 'All'
+        ? 'There are currently no tasks.'
+        : `There are currently no ${activeFilter.toLowerCase()} tasks.`;
+  }
+
+  return {
+    heading: 'No matching tasks',
+    body,
+    actionLabel: 'Reset Filters',
+    actionType: 'reset-filters',
+  };
 }

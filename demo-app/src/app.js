@@ -8,6 +8,7 @@ import {
   deleteTask,
   filterTasks,
   getProgressStats,
+  formatEmptyStateCopy,
 } from './taskModel.js';
 import { loadTasks, saveTasks } from './storage.js';
 
@@ -17,38 +18,106 @@ const state = {
   query: '',
 };
 
-// DOM References
-const progressRatioEl = document.getElementById('progress-ratio');
-const progressBarEl = document.getElementById('progress-bar');
-const progressFillEl = document.getElementById('progress-fill');
-const progressDetailEl = document.getElementById('progress-detail');
+// DOM References (resolved safely inside init() so importing app.js in non-DOM runtimes is safe)
+let progressRatioEl = null;
+let progressBarEl = null;
+let progressFillEl = null;
+let progressDetailEl = null;
 
-const recoveryBannerEl = document.getElementById('recovery-banner');
-const recoveryMessageEl = document.getElementById('recovery-message');
-const dismissRecoveryBtn = document.getElementById('dismiss-recovery');
+let recoveryBannerEl = null;
+let recoveryMessageEl = null;
+let dismissRecoveryBtn = null;
 
-const taskFormEl = document.getElementById('task-form');
-const titleInputEl = document.getElementById('task-title');
-const titleCounterEl = document.getElementById('title-counter');
-const titleErrorEl = document.getElementById('title-error');
-const stageSelectEl = document.getElementById('task-stage');
-const prioritySelectEl = document.getElementById('task-priority');
+let taskFormEl = null;
+let titleInputEl = null;
+let titleCounterEl = null;
+let titleErrorEl = null;
+let stageSelectEl = null;
+let prioritySelectEl = null;
 
-const filterButtons = Array.from(document.querySelectorAll('.filter-btn'));
-const countAllEl = document.getElementById('count-all');
-const countActiveEl = document.getElementById('count-active');
-const countDoneEl = document.getElementById('count-done');
+let filterButtons = [];
+let countAllEl = null;
+let countActiveEl = null;
+let countDoneEl = null;
 
-const searchInputEl = document.getElementById('task-search');
-const clearSearchBtn = document.getElementById('clear-search');
+let searchInputEl = null;
+let clearSearchBtn = null;
 
-const srStatusEl = document.getElementById('sr-status');
-const loadingSkeletonEl = document.getElementById('loading-skeleton');
-const emptyStateEl = document.getElementById('empty-state');
-const emptyHeadingEl = document.getElementById('empty-state-heading');
-const emptyBodyEl = document.getElementById('empty-state-body');
-const emptyActionBtn = document.getElementById('empty-state-action');
-const taskListEl = document.getElementById('task-list');
+let srStatusEl = null;
+let loadingSkeletonEl = null;
+let emptyStateEl = null;
+let emptyHeadingEl = null;
+let emptyBodyEl = null;
+let emptyActionBtn = null;
+let taskListEl = null;
+
+function cacheDomRefs() {
+  if (typeof document === 'undefined') {
+    return false;
+  }
+
+  progressRatioEl = document.getElementById('progress-ratio');
+  progressBarEl = document.getElementById('progress-bar');
+  progressFillEl = document.getElementById('progress-fill');
+  progressDetailEl = document.getElementById('progress-detail');
+
+  recoveryBannerEl = document.getElementById('recovery-banner');
+  recoveryMessageEl = document.getElementById('recovery-message');
+  dismissRecoveryBtn = document.getElementById('dismiss-recovery');
+
+  taskFormEl = document.getElementById('task-form');
+  titleInputEl = document.getElementById('task-title');
+  titleCounterEl = document.getElementById('title-counter');
+  titleErrorEl = document.getElementById('title-error');
+  stageSelectEl = document.getElementById('task-stage');
+  prioritySelectEl = document.getElementById('task-priority');
+
+  filterButtons = Array.from(document.querySelectorAll('.filter-btn'));
+  countAllEl = document.getElementById('count-all');
+  countActiveEl = document.getElementById('count-active');
+  countDoneEl = document.getElementById('count-done');
+
+  searchInputEl = document.getElementById('task-search');
+  clearSearchBtn = document.getElementById('clear-search');
+
+  srStatusEl = document.getElementById('sr-status');
+  loadingSkeletonEl = document.getElementById('loading-skeleton');
+  emptyStateEl = document.getElementById('empty-state');
+  emptyHeadingEl = document.getElementById('empty-state-heading');
+  emptyBodyEl = document.getElementById('empty-state-body');
+  emptyActionBtn = document.getElementById('empty-state-action');
+  taskListEl = document.getElementById('task-list');
+
+  const requiredElements = [
+    progressRatioEl,
+    progressBarEl,
+    progressFillEl,
+    progressDetailEl,
+    recoveryBannerEl,
+    recoveryMessageEl,
+    dismissRecoveryBtn,
+    taskFormEl,
+    titleInputEl,
+    titleCounterEl,
+    titleErrorEl,
+    stageSelectEl,
+    prioritySelectEl,
+    countAllEl,
+    countActiveEl,
+    countDoneEl,
+    searchInputEl,
+    clearSearchBtn,
+    srStatusEl,
+    loadingSkeletonEl,
+    emptyStateEl,
+    emptyHeadingEl,
+    emptyBodyEl,
+    emptyActionBtn,
+    taskListEl,
+  ];
+
+  return requiredElements.every(Boolean) && filterButtons.length > 0;
+}
 
 function announce(message) {
   srStatusEl.textContent = '';
@@ -201,23 +270,15 @@ function renderTaskList() {
     emptyStateEl.hidden = false;
     taskListEl.hidden = true;
 
-    if (state.tasks.length === 0) {
-      emptyHeadingEl.textContent = 'No sprint tasks yet';
-      emptyBodyEl.textContent =
-        'Add your first pipeline item to start tracking progress from Plan to Ship.';
-      emptyActionBtn.textContent = 'Create First Task';
-      emptyActionBtn.dataset.emptyAction = 'focus-composer';
-    } else {
-      emptyHeadingEl.textContent = 'No matching tasks';
-      const trimmedQuery = state.query.trim();
-      if (trimmedQuery.length > 0) {
-        emptyBodyEl.textContent = `No ${state.filter.toLowerCase()} tasks match "${trimmedQuery}".`;
-      } else {
-        emptyBodyEl.textContent = `There are currently no ${state.filter.toLowerCase()} tasks.`;
-      }
-      emptyActionBtn.textContent = 'Reset Filters';
-      emptyActionBtn.dataset.emptyAction = 'reset-filters';
-    }
+    const emptyCopy = formatEmptyStateCopy({
+      totalTasks: state.tasks.length,
+      filter: state.filter,
+      query: state.query,
+    });
+    emptyHeadingEl.textContent = emptyCopy.heading;
+    emptyBodyEl.textContent = emptyCopy.body;
+    emptyActionBtn.textContent = emptyCopy.actionLabel;
+    emptyActionBtn.dataset.emptyAction = emptyCopy.actionType;
     return;
   }
 
@@ -424,7 +485,11 @@ function bindEvents() {
   });
 }
 
-function init() {
+export function init() {
+  if (!cacheDomRefs()) {
+    return false;
+  }
+
   const loaded = loadTasks();
   state.tasks = loaded.tasks;
 
@@ -439,6 +504,9 @@ function init() {
   updateCharacterCounter();
   bindEvents();
   render();
+  return true;
 }
 
-init();
+if (typeof document !== 'undefined' && document.getElementById('task-form')) {
+  init();
+}

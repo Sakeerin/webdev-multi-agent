@@ -6,6 +6,7 @@ import {
   PRIORITIES,
   FILTERS,
   MAX_TITLE_LENGTH,
+  MAX_ID_LENGTH,
   validateTaskInput,
   isValidTask,
   createTask,
@@ -16,6 +17,7 @@ import {
   deleteTask,
   filterTasks,
   getProgressStats,
+  formatEmptyStateCopy,
 } from '../src/taskModel.js';
 
 describe('taskModel constants', () => {
@@ -23,10 +25,11 @@ describe('taskModel constants', () => {
     assert.deepEqual(STAGES, ['Plan', 'Design', 'Build', 'Verify', 'Secure', 'Ship']);
   });
 
-  it('defines priorities, filters, and max title length', () => {
+  it('defines priorities, filters, max title length, and max ID length', () => {
     assert.deepEqual(PRIORITIES, ['Low', 'Medium', 'High']);
     assert.deepEqual(FILTERS, ['All', 'Active', 'Done']);
     assert.equal(MAX_TITLE_LENGTH, 80);
+    assert.equal(MAX_ID_LENGTH, 128);
   });
 });
 
@@ -107,6 +110,20 @@ describe('createTask & validation', () => {
     const payload = '<img src=x onerror=alert(1)>';
     const task = createTask({ title: payload, stage: 'Verify', priority: 'High' });
     assert.equal(task.title, payload);
+  });
+
+  it('enforces MAX_ID_LENGTH when creating tasks with explicit id', () => {
+    const id128 = 'a'.repeat(128);
+    const task = createTask({ title: 'Valid', id: id128 });
+    assert.equal(task.id, id128);
+    assert.equal(isValidTask(task), true);
+
+    const id129 = 'a'.repeat(129);
+    assert.throws(() => createTask({ title: 'Valid', id: id129 }), /128/);
+
+    const whitespaceIdTask = createTask({ title: 'Valid', id: '   ' });
+    assert.equal(isValidTask(whitespaceIdTask), true);
+    assert.ok(whitespaceIdTask.id.length > 0 && whitespaceIdTask.id.length <= MAX_ID_LENGTH);
   });
 });
 
@@ -221,5 +238,42 @@ describe('filterTasks & getProgressStats', () => {
       active: 0,
       percent: 100,
     });
+  });
+});
+
+describe('formatEmptyStateCopy', () => {
+  it('returns first-run copy when totalTasks is 0', () => {
+    assert.deepEqual(formatEmptyStateCopy({ totalTasks: 0, filter: 'All', query: '' }), {
+      heading: 'No sprint tasks yet',
+      body: 'Add your first pipeline item to start tracking progress from Plan to Ship.',
+      actionLabel: 'Create First Task',
+      actionType: 'focus-composer',
+    });
+  });
+
+  it('omits filter qualifier when filter is All and query is present', () => {
+    const copy = formatEmptyStateCopy({ totalTasks: 2, filter: 'All', query: '  audit  ' });
+    assert.deepEqual(copy, {
+      heading: 'No matching tasks',
+      body: 'No tasks match "audit".',
+      actionLabel: 'Reset Filters',
+      actionType: 'reset-filters',
+    });
+    assert.equal(copy.body.includes('No all tasks'), false);
+  });
+
+  it('includes filter qualifier for Active and Done filters', () => {
+    assert.equal(
+      formatEmptyStateCopy({ totalTasks: 2, filter: 'Active', query: 'csp' }).body,
+      'No active tasks match "csp".'
+    );
+    assert.equal(
+      formatEmptyStateCopy({ totalTasks: 2, filter: 'Done', query: '' }).body,
+      'There are currently no done tasks.'
+    );
+    assert.equal(
+      formatEmptyStateCopy({ totalTasks: 2, filter: 'All', query: '' }).body,
+      'There are currently no tasks.'
+    );
   });
 });

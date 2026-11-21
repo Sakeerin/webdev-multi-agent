@@ -77,7 +77,7 @@ for (const file of htmlFiles) {
   if (!/<header\b/i.test(content) || !/<main\b/i.test(content)) {
     errors.push(`HTML lint error in ${fileRel}: missing semantic <header> or <main> landmark`);
   }
-  if (/\son[a-z]+\s*=\s*["']/i.test(content)) {
+  if (/<[a-z][^>]*\son[a-z]+\s*=\s*(?:["']|[^\s>]+)/i.test(content)) {
     errors.push(`Security lint error in ${fileRel}: inline event handler attribute detected`);
   }
   if (/<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?\S[\s\S]*?<\/script>/i.test(content)) {
@@ -93,8 +93,10 @@ const cssFiles = collectFiles(SRC_DIR, new Set(['.css']));
 for (const file of cssFiles) {
   const content = readFileSync(file, 'utf8');
   const fileRel = rel(file);
-  // Strip CSS comments before checking braces and directives
-  const stripped = content.replace(/\/\*[\s\S]*?\*\//g, '');
+  // Strip CSS comments and quoted strings before checking braces and directives
+  const stripped = content
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""');
   let balance = 0;
   for (const ch of stripped) {
     if (ch === '{') balance += 1;

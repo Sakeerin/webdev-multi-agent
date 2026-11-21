@@ -9,7 +9,7 @@ const DEFAULT_DIST_DIR = path.join(ROOT_DIR, 'dist');
 
 export const SECURITY_HEADERS = Object.freeze({
   'Content-Security-Policy':
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; connect-src 'none'",
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
@@ -56,6 +56,9 @@ export function resolveSafePath(distDir, rawPathname) {
 
   const normalizedRoute = decoded === '/' ? '/index.html' : decoded;
   const relativeTarget = normalizedRoute.replace(/^\/+/, '');
+  if (/^[a-zA-Z]:/.test(relativeTarget)) {
+    return { status: 403, filePath: null };
+  }
   const resolvedDist = path.resolve(distDir);
   const candidate = path.resolve(resolvedDist, relativeTarget);
 
@@ -107,10 +110,11 @@ export function createStaticServer(distDir = DEFAULT_DIST_DIR) {
       return;
     }
 
+    const rawTarget = req.url ?? '/';
     let pathname;
     try {
-      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-      pathname = url.pathname;
+      const url = new URL(rawTarget, 'http://127.0.0.1');
+      pathname = rawTarget.startsWith('/') ? rawTarget.split(/[?#]/, 1)[0] : url.pathname;
     } catch {
       sendText(res, 400, 'Bad Request');
       return;
