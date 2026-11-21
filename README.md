@@ -42,8 +42,10 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | **`web-dev`** | Step 2 (Design), Step 3 (Build) | `frontend-ui-engineering`, `impeccable`, `incremental-implementation` | Read/Write/Edit, Shell, MCP (`StitchMCP`) |
 | **`tester`** | Step 4 (Verify) | `tdd`, `browser-testing-with-devtools` | Read/Write/Edit, Shell, MCP (`chrome-devtools-mcp`) |
-| **`security-auditor`** | Step 5 (Secure) | `security-and-hardening`, `firebase-security-rules-auditor` | **Read-only** (`read_file`, `run_command` for audits) |
+| **`security-auditor`** | Step 5 (Secure) | `security-and-hardening`, `firebase-security-rules-auditor` | **Read-only** (`read_file`, `run_command` for audits + post-audit `git status --porcelain` guard) |
 | **`devops`** | Step 6 (Ship) | `ci-cd-and-automation`, `shipping-and-launch` | Read/Write/Edit, Shell |
+
+> **Note:** Antigravity automatically injects MCP tools (`call_mcp_tool`, `list_resources`, `read_resource`) at runtime — do not list them manually in `.agents/agents/*.md` `tools:` frontmatter.
 
 ---
 
@@ -53,15 +55,18 @@ flowchart TD
 webdev-multi-agent/
 ├── AGENTS.md                        # Main Agent Orchestrator Playbook (single source of truth)
 ├── CLAUDE.md                        # Cross-tool bridge (@AGENTS.md for Claude Code)
+├── GEMINI.md                        # Cross-tool bridge (@AGENTS.md for Gemini CLI)
 ├── LICENSE                          # MIT License
 ├── PLAN.md                          # Clean blank task execution plan template
 ├── .github/
 │   ├── PULL_REQUEST_TEMPLATE.md     # Proof-driven PR checklist aligned with AGENTS.md
 │   └── workflows/
-│       └── ci.yml                   # Playbook validation, secret checks & conditional app gates
+│       └── ci.yml                   # Playbook validation, sync tests, secret checks & conditional app gates
 ├── scripts/
 │   ├── validate-agents.mjs          # Zero-dependency .agents/ & AGENTS.md validator
-│   └── validate-agents.test.mjs     # Unit tests for agent/skill validation (node:test)
+│   ├── validate-agents.test.mjs     # Unit tests for agent/skill validation (node:test)
+│   ├── sync-tools.mjs               # Mirror .agents/ to Claude, Cursor, Gemini, or Codex
+│   └── sync-tools.test.mjs          # Unit tests for cross-tool sync (node:test)
 ├── .agents/
 │   ├── agents/                      # Sub-agent definitions with explicit tool permissions
 │   │   ├── web-dev.md
@@ -75,6 +80,7 @@ webdev-multi-agent/
 │       ├── browser-testing-with-devtools/
 │       ├── tdd/
 │       ├── security-and-hardening/
+│       │   └── references/owasp-web-checklist.md
 │       ├── firebase-security-rules-auditor/
 │       ├── ci-cd-and-automation/
 │       └── shipping-and-launch/
@@ -94,20 +100,27 @@ webdev-multi-agent/
 | Tool | Main Rules | Sub-Agents | Skills |
 | :--- | :--- | :--- | :--- |
 | **Antigravity** | `AGENTS.md` | `.agents/agents/*.md` | `.agents/skills/<name>/` |
-| **Claude Code** | `CLAUDE.md` (`@AGENTS.md`) | `.claude/agents/*.md` (optional mirror) | `.claude/skills/<name>/` |
+| **Claude Code** | `CLAUDE.md` (`@AGENTS.md`) | `.claude/agents/*.md` | `.claude/skills/<name>/` |
 | **Codex** | `AGENTS.md` | `.codex/agents/*.toml` | `.agents/skills/<name>/` |
-| **Gemini CLI** | `GEMINI.md` / `AGENTS.md` | `.gemini/agents/*.md` | `.agents/skills/<name>/` |
-| **Cursor** | `AGENTS.md` | `.cursor/agents/*.md` | `.agents/skills/<name>/` |
+| **Gemini CLI** | `GEMINI.md` (`@AGENTS.md`) | `.gemini/agents/*.md` | `.gemini/skills/<name>/` |
+| **Cursor** | `AGENTS.md` | `.cursor/agents/*.md` | `.cursor/skills/<name>/` |
+
+Mirror `.agents/` to your preferred tool in one command (preview first with `--dry-run`):
+
+```bash
+node scripts/sync-tools.mjs --target=all --dry-run
+node scripts/sync-tools.mjs --target=claude   # Supports: claude | cursor | gemini | codex | all
+```
 
 ---
 
 ## Validate Playbook & Skills
 
-Run the zero-dependency validator anytime you modify `AGENTS.md`, sub-agents, or skills (requires **Node.js >= 22**):
+Run the zero-dependency validator and test suites anytime you modify `AGENTS.md`, sub-agents, or skills (requires **Node.js >= 22**):
 
 ```bash
 node scripts/validate-agents.mjs
-node --test scripts/validate-agents.test.mjs
+node --test scripts/validate-agents.test.mjs scripts/sync-tools.test.mjs
 ```
 
 ---
