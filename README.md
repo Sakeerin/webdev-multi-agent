@@ -53,10 +53,15 @@ flowchart TD
 webdev-multi-agent/
 ├── AGENTS.md                        # Main Agent Orchestrator Playbook (single source of truth)
 ├── CLAUDE.md                        # Cross-tool bridge (@AGENTS.md for Claude Code)
-├── PLAN.md                          # Active task execution plan & proof tracker
+├── LICENSE                          # MIT License
+├── PLAN.md                          # Clean blank task execution plan template
 ├── .github/
+│   ├── PULL_REQUEST_TEMPLATE.md     # Proof-driven PR checklist aligned with AGENTS.md
 │   └── workflows/
-│       └── ci.yml                   # Automated CI quality gates (secrets, lint, test, build)
+│       └── ci.yml                   # Playbook validation, secret checks & conditional app gates
+├── scripts/
+│   ├── validate-agents.mjs          # Zero-dependency .agents/ & AGENTS.md validator
+│   └── validate-agents.test.mjs     # Unit tests for agent/skill validation (node:test)
 ├── .agents/
 │   ├── agents/                      # Sub-agent definitions with explicit tool permissions
 │   │   ├── web-dev.md
@@ -75,9 +80,10 @@ webdev-multi-agent/
 │       └── shipping-and-launch/
 └── demo-app/                        # "Sprint Pulse" — End-to-End verified 375px demo app
     ├── DESIGN_SPEC.md               # 375px mobile-first design spec & WCAG AA contrast table
+    ├── PLAN.example.md              # Completed example PLAN.md from the Sprint Pulse run
     ├── firestore.rules              # Least-privilege reference Firestore Security Rules
     ├── src/                         # Zero-dependency ES modules UI & domain model
-    ├── tests/                       # 25 unit & storage recovery tests (node:test)
+    ├── tests/                       # 40 unit & server security tests (node:test)
     └── scripts/                     # Linter, builder, and hardened localhost dev server
 ```
 
@@ -95,6 +101,17 @@ webdev-multi-agent/
 
 ---
 
+## Validate Playbook & Skills
+
+Run the zero-dependency validator anytime you modify `AGENTS.md`, sub-agents, or skills (requires **Node.js >= 22**):
+
+```bash
+node scripts/validate-agents.mjs
+node --test scripts/validate-agents.test.mjs
+```
+
+---
+
 ## Working Example: Sprint Pulse (`demo-app/`)
 
 `demo-app/` contains **Sprint Pulse**, a zero-dependency, offline-first `375px` mobile-first task tracker built end-to-end by this multi-agent pipeline (requires **Node.js >= 22**):
@@ -102,13 +119,13 @@ webdev-multi-agent/
 ```bash
 cd demo-app
 npm run lint    # Syntax & unsafe DOM sink checks
-npm test        # 25/25 unit & corrupted-storage recovery tests (node:test)
+npm test        # 40 tests (8 suites): domain model, storage recovery & hardened server checks
 npm run build   # Builds static assets into demo-app/dist/
 npm start       # Serves http://127.0.0.1:4173 with strict CSP & security headers
 ```
 
 ### Verified End-to-End Dry Run Metrics
-- **Automated Tests**: `25 / 25` passing across `5` suites (`node:test`)
+- **Automated Tests**: `40` tests across `8` suites (`node:test`) covering domain validation, storage recovery, and static server traversal/CSP security
 - **Mobile Core Web Vitals (`375x812`, Chrome DevTools MCP)**: `LCP 123ms` · `INP 21ms` · `CLS 0.00`
 - **Mobile Ergonomics**: `0px` horizontal overflow (`375 <= 375`) · `15/15` touch targets `>= 44x44px`
 - **Security Audit**: `0` Critical / High / Medium findings · Least-privilege `firestore.rules` `PASS`
@@ -117,6 +134,6 @@ npm start       # Serves http://127.0.0.1:4173 with strict CSP & security header
 
 ## Using This Repo as a Starter Kit
 
-1. Clone or use this repository as a template for your web project.
+1. Click **Use this template** on GitHub (or clone) to start your web project — `PLAN.md` is already reset as a clean blank template (see `demo-app/PLAN.example.md` for a completed example).
 2. Customize **Tooling Defaults** in `AGENTS.md` and stack-specific checks in `.agents/skills/` (e.g., swap `firebase-security-rules-auditor` for Supabase RLS or SQL policy checks if needed).
-3. Remove `demo-app/` once you are ready to scaffold your own app, and keep `.github/workflows/ci.yml` aligned with your project's lint/test/build scripts.
+3. Remove `demo-app/` once you are ready to scaffold your own app — `.github/workflows/ci.yml` will automatically skip the demo-app job while continuing to validate `.agents/` and secret hygiene on every PR.

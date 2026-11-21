@@ -14,13 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality-gates:
-    name: Lint, Test, Build & Secret Check
+  agent-playbook-gates:
+    name: Agent Playbook & Secret Checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: demo-app
 
     steps:
       - name: Checkout repository
@@ -31,8 +28,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Check no .env secret files are tracked
-        working-directory: .
+      - name: Check no tracked secret or key files
         shell: bash
         run: |
           set -euo pipefail
@@ -42,13 +38,59 @@ jobs:
             echo "$tracked_env"
             exit 1
           fi
-          echo "OK: No tracked .env secret files found."
+          tracked_keys="$(git ls-files '*.pem' '*.key' '*serviceAccount*.json')"
+          if [ -n "$tracked_keys" ]; then
+            echo "::error::Tracked private key or service account file(s) detected:"
+            echo "$tracked_keys"
+            exit 1
+          fi
+          echo "OK: No tracked secret or key files found."
+
+      - name: Validate AGENTS.md, sub-agents, and skills
+        run: node scripts/validate-agents.mjs
+
+      - name: Run agent validator unit tests
+        run: node --test scripts/validate-agents.test.mjs
+
+  # Starter-kit note: removing demo-app/ automatically skips this job without breaking CI.
+  # Add or update a job targeting your own application directory once scaffolded.
+  demo-app-gates:
+    name: Demo App Quality Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if demo-app exists
+        id: check-demo
+        shell: bash
+        run: |
+          if [ -f "demo-app/package.json" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "demo-app/ not present — skipping demo-app quality gates."
+          fi
+
+      - name: Setup Node.js 22
+        if: steps.check-demo.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Lint
+        if: steps.check-demo.outputs.exists == 'true'
+        working-directory: demo-app
         run: npm run lint
 
       - name: Run unit tests
+        if: steps.check-demo.outputs.exists == 'true'
+        working-directory: demo-app
         run: npm test
 
       - name: Production build
+        if: steps.check-demo.outputs.exists == 'true'
+        working-directory: demo-app
         run: npm run build
