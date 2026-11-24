@@ -1,9 +1,17 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const MAX_AGENTS_MD_BYTES = 24000;
+export const ALLOWED_AGENT_TOOLS = Object.freeze([
+  'read_file',
+  'write_file',
+  'edit_file',
+  'run_command',
+  'search_web',
+]);
 
+const ALLOWED_AGENT_TOOLS_SET = new Set(ALLOWED_AGENT_TOOLS);
 const REQUIRED_PIPELINE_STAGES = ['Plan', 'Design', 'Build', 'Verify', 'Secure', 'Ship'];
 const SKILL_NAME_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const AUDITOR_FORBIDDEN_WRITE_TOOLS = new Set([
@@ -19,6 +27,7 @@ const AUTO_INJECTED_DISALLOWED_TOOLS = new Set([
   'send_message',
   'manage_task',
 ]);
+const SKIPPED_LINK_SCHEME_REGEX = /^(?:https?:\/\/|mailto:|file:\/\/|conversation:\/\/)/i;
 
 function stripQuotes(value) {
   if (
@@ -133,6 +142,158 @@ export function parseFrontmatter(raw) {
   return { ok: true, data, body };
 }
 
+function stripInlineCodeSpans(text) {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === '`') {
+      let tickCount = 0;
+      while (i + tickCount < text.length && text[i + tickCount] === '`') {
+        tickCount += 1;
+      }
+      const fence = '`'.repeat(tickCount);
+      const closeIdx = text.indexOf(fence, i + tickCount);
+      if (closeIdx !== -1) {
+        i = closeIdx + tickCount;
+        continue;
+      }
+      out += fence;
+      i += tickCount;
+      continue;
+    }
+    out += text[i];
+    i += 1;
+  }
+  return out;
+}
+
+function stripMarkdownCode(rawMarkdown) {
+  const parsed = parseFrontmatter(rawMarkdown);
+  const content = (parsed.ok ? parsed.body : rawMarkdown).replace(/\r\n/g, '\n');
+  const lines = content.split('\n');
+  const keptLines = [];
+  let activeFenceChar = null;
+  let activeFenceLen = 0;
+
+  for (const line of lines) {
+    if (!activeFenceChar) {
+      const openMatch = line.match(/^[ \t]*(`{3,}|~{3,})/);
+      if (openMatch) {
+        activeFenceChar = openMatch[1][0];
+        activeFenceLen = openMatch[1].length;
+        continue;
+      }
+      keptLines.push(line);
+    } else {
+      const closeMatch = line.match(/^[ \t]*(`{3,}|~{3,})[ \t]*$/);
+      if (
+        closeMatch &&
+        closeMatch[1][0] === activeFenceChar &&
+        closeMatch[1].length >= activeFenceLen
+      ) {
+        activeFenceChar = null;
+        activeFenceLen = 0;
+      }
+    }
+  }
+
+  return stripInlineCodeSpans(keptLines.join('\n'));
+}
+
+function stripOptionalLinkTitle(rawTarget) {
+  const trimmed = rawTarget.trim();
+  const lastChar = trimmed[trimmed.length - 1];
+  if (lastChar === '"' || lastChar === "'") {
+    const openQuoteIdx = trimmed.indexOf(lastChar);
+    if (openQuoteIdx > 0 && /\s/.test(trimmed[openQuoteIdx - 1])) {
+      return trimmed.slice(0, openQuoteIdx).trim();
+    }
+  }
+  return trimmed;
+}
+
+function collectMarkdownFilesRecursive(currentDir, results = []) {
+  if (!existsSync(currentDir)) {
+    return results;
+  }
+  const entries = readdirSync(currentDir, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name)
+  );
+  for (const entry of entries) {
+    const fullPath = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      collectMarkdownFilesRecursive(fullPath, results);
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
+function validateRelativeMarkdownLinks(rootDir, markdownFilePath, rawContent, errors) {
+  const resolvedRoot = path.resolve(rootDir);
+  const realRoot = existsSync(resolvedRoot) ? realpathSync(resolvedRoot) : resolvedRoot;
+  const relSource = path.relative(resolvedRoot, markdownFilePath).replaceAll('\\', '/');
+  const stripped = stripMarkdownCode(rawContent);
+  const linkRegex = /\[[^\][\r\n]*\]\(([^)\r\n]*)\)/g;
+
+  for (const match of stripped.matchAll(linkRegex)) {
+    const rawTarget = match[1].trim();
+    if (rawTarget.length === 0) {
+      continue;
+    }
+
+    const unwrapped =
+      rawTarget.startsWith('<') && rawTarget.endsWith('>')
+        ? rawTarget.slice(1, -1).trim()
+        : rawTarget;
+    const withoutTitle = stripOptionalLinkTitle(unwrapped);
+
+    if (
+      withoutTitle.length === 0 ||
+      withoutTitle.startsWith('#') ||
+      SKIPPED_LINK_SCHEME_REGEX.test(withoutTitle)
+    ) {
+      continue;
+    }
+
+    if (withoutTitle.includes('\0')) {
+      errors.push(`Invalid null byte in Markdown link "${rawTarget}" in ${relSource}.`);
+      continue;
+    }
+
+    const hashIdx = withoutTitle.indexOf('#');
+    const relPathPart = (hashIdx === -1 ? withoutTitle : withoutTitle.slice(0, hashIdx)).trim();
+    if (relPathPart.length === 0) {
+      continue;
+    }
+
+    const resolvedTarget = path.resolve(path.dirname(markdownFilePath), relPathPart);
+    const relToRoot = path.relative(resolvedRoot, resolvedTarget);
+    if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) {
+      errors.push(
+        `Relative Markdown link "${rawTarget}" in ${relSource} resolves outside repository root.`
+      );
+      continue;
+    }
+
+    if (!existsSync(resolvedTarget)) {
+      errors.push(
+        `Broken relative Markdown link "${rawTarget}" in ${relSource} (target does not exist).`
+      );
+      continue;
+    }
+
+    const realTarget = realpathSync(resolvedTarget);
+    const realRelToRoot = path.relative(realRoot, realTarget);
+    if (realRelToRoot.startsWith('..') || path.isAbsolute(realRelToRoot)) {
+      errors.push(
+        `Relative Markdown link "${rawTarget}" in ${relSource} resolves outside repository root via symlink.`
+      );
+    }
+  }
+}
+
 export function validateWorkspace(rootDir) {
   const errors = [];
   const warnings = [];
@@ -227,6 +388,11 @@ export function validateWorkspace(rootDir) {
 
       discoveredSkills.add(dirName);
     }
+
+    for (const mdPath of collectMarkdownFilesRecursive(skillsDir)) {
+      const mdContent = readFileSync(mdPath, 'utf8');
+      validateRelativeMarkdownLinks(rootDir, mdPath, mdContent, errors);
+    }
   }
 
   // 4. Validate .agents/agents/*.md
@@ -249,6 +415,7 @@ export function validateWorkspace(rootDir) {
       const stem = fileEntry.name.replace(/\.md$/, '');
       const agentPath = path.join(agentsDir, fileEntry.name);
       const raw = readFileSync(agentPath, 'utf8');
+      validateRelativeMarkdownLinks(rootDir, agentPath, raw, errors);
       const parsed = parseFrontmatter(raw);
 
       if (!parsed.ok) {
@@ -287,6 +454,15 @@ export function validateWorkspace(rootDir) {
         if (autoInjected.length > 0) {
           errors.push(
             `Sub-agent "${stem}" must not list auto-injected runtime/MCP tools in "tools" (Antigravity auto-injects them and listing them causes startup failure): ${autoInjected.join(', ')}.`
+          );
+        }
+
+        const unknownTools = tools.filter(
+          (tool) => !ALLOWED_AGENT_TOOLS_SET.has(tool) && !AUTO_INJECTED_DISALLOWED_TOOLS.has(tool)
+        );
+        if (unknownTools.length > 0) {
+          errors.push(
+            `Sub-agent "${stem}" declares unknown tool(s) in "tools": ${unknownTools.join(', ')}. Allowed tools (ALLOWED_AGENT_TOOLS): ${ALLOWED_AGENT_TOOLS.join(', ')}.`
           );
         }
 
