@@ -1,0 +1,21 @@
+{
+  "name": "webdev-multi-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "validate": "node scripts/validate-agents.mjs",
+    "test": "node --test \"scripts/*.test.mjs\"",
+    "sync": "node scripts/sync-tools.mjs",
+    "sync:dry-run": "node scripts/sync-tools.mjs --target=all --dry-run",
+    "sync:check": "node scripts/sync-tools.mjs --target=all --check",
+    "template:init": "node scripts/init-template.mjs",
+    "template:init:dry-run": "node scripts/init-template.mjs --dry-run",
+    "demo:lint": "npm --prefix demo-app run lint",
+    "demo:test": "npm --prefix demo-app test",
+    "demo:build": "npm --prefix demo-app run build"
+  }
+}
