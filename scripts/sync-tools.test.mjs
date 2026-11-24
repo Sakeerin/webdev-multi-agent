@@ -1,5 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
@@ -22,18 +23,24 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
+const SYNC_SCRIPT_PATH = path.join(__dirname, 'sync-tools.mjs');
 
 describe('mapClaudeTools', () => {
   it('maps Antigravity tool names to Claude Code tool names and enforces least privilege', () => {
     assert.deepEqual(
       mapClaudeTools(['read_file', 'write_file', 'edit_file', 'run_command']),
-      ['Read', 'Write', 'Edit', 'Bash']
+      ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash']
     );
     assert.deepEqual(
       mapClaudeTools(['read_file', 'run_command', 'read_file']),
-      ['Read', 'Bash']
+      ['Read', 'Glob', 'Grep', 'Bash']
+    );
+    assert.deepEqual(
+      mapClaudeTools(['read_file', 'search_web']),
+      ['Read', 'Glob', 'Grep', 'WebSearch']
     );
     const auditorMapped = mapClaudeTools(['read_file', 'run_command']);
+    assert.deepEqual(auditorMapped, ['Read', 'Glob', 'Grep', 'Bash']);
     assert.equal(auditorMapped.includes('Write'), false);
     assert.equal(auditorMapped.includes('Edit'), false);
   });
@@ -101,7 +108,7 @@ describe('syncTools', () => {
       path.join(dir, '.claude', 'agents', 'security-auditor.md'),
       'utf8'
     );
-    assert.match(auditorContent, /^tools: Read, Bash$/m);
+    assert.match(auditorContent, /^tools: Read, Glob, Grep, Bash$/m);
     assert.equal(auditorContent.includes('Write'), false);
     assert.equal(auditorContent.includes('Edit'), false);
 
@@ -173,5 +180,127 @@ describe('syncTools', () => {
       () => syncTools(dir, { target: 'unknown' }),
       /Unsupported target "unknown".*claude.*cursor.*gemini.*codex/i
     );
+  });
+
+  it('clean: true removes zombie agent/skill files and prunes empty skill dirs while preserving non-managed files', () => {
+    const dir = createTempWorkspace();
+    syncTools(dir, { target: 'all' });
+
+    // Plant zombie files inside managed subdirectories
+    const zombieSkillPath = path.join(dir, '.claude', 'skills', 'old-skill', 'SKILL.md');
+    const zombieClaudeAgentPath = path.join(dir, '.claude', 'agents', 'retired-agent.md');
+    const zombieCodexPath = path.join(dir, '.codex', 'agents', 'old.toml');
+    mkdirSync(path.dirname(zombieSkillPath), { recursive: true });
+    writeFileSync(zombieSkillPath, '# Zombie Skill\n', 'utf8');
+    writeFileSync(zombieClaudeAgentPath, '# Zombie Agent\n', 'utf8');
+    writeFileSync(zombieCodexPath, 'name = "old"\n', 'utf8');
+
+    // Plant user-owned config files OUTSIDE managed subdirectories
+    const claudeSettingsPath = path.join(dir, '.claude', 'settings.json');
+    const cursorCustomRulePath = path.join(dir, '.cursor', 'rules', 'keep.mdc');
+    mkdirSync(path.dirname(cursorCustomRulePath), { recursive: true });
+    writeFileSync(claudeSettingsPath, '{"theme":"dark"}\n', 'utf8');
+    writeFileSync(cursorCustomRulePath, '# Custom Cursor Rule\n', 'utf8');
+
+    // 1. clean: true + dryRun: true reports removed without deleting from disk
+    const dryCleanRes = syncTools(dir, { target: 'all', clean: true, dryRun: true });
+    assert.deepEqual(
+      dryCleanRes.removed,
+      [
+        '.claude/agents/retired-agent.md',
+        '.claude/skills/old-skill/SKILL.md',
+        '.codex/agents/old.toml',
+      ]
+    );
+    assert.equal(existsSync(zombieSkillPath), true);
+    assert.equal(existsSync(zombieClaudeAgentPath), true);
+    assert.equal(existsSync(zombieCodexPath), true);
+
+    // 2. clean: true deletes zombie files, prunes empty skill dir, preserves non-managed files
+    const cleanRes = syncTools(dir, { target: 'all', clean: true });
+    assert.deepEqual(
+      cleanRes.removed,
+      [
+        '.claude/agents/retired-agent.md',
+        '.claude/skills/old-skill/SKILL.md',
+        '.codex/agents/old.toml',
+      ]
+    );
+    assert.equal(existsSync(zombieSkillPath), false);
+    assert.equal(existsSync(path.join(dir, '.claude', 'skills', 'old-skill')), false);
+    assert.equal(existsSync(zombieClaudeAgentPath), false);
+    assert.equal(existsSync(zombieCodexPath), false);
+    assert.equal(existsSync(claudeSettingsPath), true);
+    assert.equal(existsSync(cursorCustomRulePath), true);
+  });
+
+  it('check: true detects missing, drifted, and stale files without modifying disk and supports CLI --check', () => {
+    const dir = createTempWorkspace();
+
+    // 1. Before sync -> inSync: false (missing files recorded in drifted)
+    const beforeRes = syncTools(dir, { target: 'all', check: true });
+    assert.equal(beforeRes.check, true);
+    assert.equal(beforeRes.inSync, false);
+    assert.ok(beforeRes.drifted.length > 0);
+    assert.deepEqual(beforeRes.stale, []);
+    assert.equal(existsSync(path.join(dir, '.claude')), false);
+
+    // 2. Right after sync -> inSync: true
+    syncTools(dir, { target: 'all' });
+    const afterSyncRes = syncTools(dir, { target: 'all', check: true });
+    assert.equal(afterSyncRes.inSync, true);
+    assert.deepEqual(afterSyncRes.drifted, []);
+    assert.deepEqual(afterSyncRes.stale, []);
+
+    // 3. Modify a synced file -> inSync: false, drifted contains modified file
+    const webDevClaudePath = path.join(dir, '.claude', 'agents', 'web-dev.md');
+    writeFileSync(webDevClaudePath, '# Tampered content\n', 'utf8');
+    const driftedRes = syncTools(dir, { target: 'all', check: true });
+    assert.equal(driftedRes.inSync, false);
+    assert.deepEqual(driftedRes.drifted, ['.claude/agents/web-dev.md']);
+    assert.deepEqual(driftedRes.stale, []);
+
+    // Restore via sync, then add a zombie file -> inSync: false, stale contains zombie file
+    syncTools(dir, { target: 'all' });
+    const staleSkillPath = path.join(dir, '.claude', 'skills', 'zombie', 'SKILL.md');
+    mkdirSync(path.dirname(staleSkillPath), { recursive: true });
+    writeFileSync(staleSkillPath, '# Stale\n', 'utf8');
+    const staleRes = syncTools(dir, { target: 'all', check: true });
+    assert.equal(staleRes.inSync, false);
+    assert.deepEqual(staleRes.drifted, []);
+    assert.deepEqual(staleRes.stale, ['.claude/skills/zombie/SKILL.md']);
+    // Confirm check: true never deleted the stale file
+    assert.equal(existsSync(staleSkillPath), true);
+
+    // 4. Verify CLI --check exits 1 when stale/drifted, and exits 0 after --clean sync (in isolated temp workspace)
+    const tempScriptsDir = path.join(dir, 'scripts');
+    mkdirSync(tempScriptsDir, { recursive: true });
+    cpSync(SYNC_SCRIPT_PATH, path.join(tempScriptsDir, 'sync-tools.mjs'));
+    cpSync(
+      path.join(__dirname, 'validate-agents.mjs'),
+      path.join(tempScriptsDir, 'validate-agents.mjs')
+    );
+
+    const cliFail = spawnSync(
+      process.execPath,
+      [path.join(tempScriptsDir, 'sync-tools.mjs'), '--target=all', '--check'],
+      { encoding: 'utf8' }
+    );
+    assert.equal(cliFail.status, 1);
+    assert.match(cliFail.stderr, /zombie\/SKILL\.md/);
+
+    const cliClean = spawnSync(
+      process.execPath,
+      [path.join(tempScriptsDir, 'sync-tools.mjs'), '--target=all', '--clean'],
+      { encoding: 'utf8' }
+    );
+    assert.equal(cliClean.status, 0);
+
+    const cliPass = spawnSync(
+      process.execPath,
+      [path.join(tempScriptsDir, 'sync-tools.mjs'), '--target=all', '--check'],
+      { encoding: 'utf8' }
+    );
+    assert.equal(cliPass.status, 0);
   });
 });
