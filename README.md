@@ -58,15 +58,20 @@ webdev-multi-agent/
 ├── GEMINI.md                        # Cross-tool bridge (@AGENTS.md for Gemini CLI)
 ├── LICENSE                          # MIT License
 ├── PLAN.md                          # Clean blank task execution plan template
+├── package.json                     # Zero-dependency root scripts (validate, test, sync, template:init)
+├── .nvmrc                           # Node.js 22 LTS version pin
 ├── .github/
 │   ├── PULL_REQUEST_TEMPLATE.md     # Proof-driven PR checklist aligned with AGENTS.md
+│   ├── dependabot.yml               # Monthly GitHub Actions version updates
 │   └── workflows/
 │       └── ci.yml                   # Playbook validation, sync tests, secret checks & conditional app gates
 ├── scripts/
-│   ├── validate-agents.mjs          # Zero-dependency .agents/ & AGENTS.md validator
+│   ├── validate-agents.mjs          # Zero-dependency .agents/, tool allowlist & markdown link validator
 │   ├── validate-agents.test.mjs     # Unit tests for agent/skill validation (node:test)
-│   ├── sync-tools.mjs               # Mirror .agents/ to Claude, Cursor, Gemini, or Codex
-│   └── sync-tools.test.mjs          # Unit tests for cross-tool sync (node:test)
+│   ├── sync-tools.mjs               # Mirror .agents/ to Claude, Cursor, Gemini, or Codex (--clean / --check)
+│   ├── sync-tools.test.mjs          # Unit tests for cross-tool sync (node:test)
+│   ├── init-template.mjs            # 1-command starter-kit initializer (removes demo-app/ & resets PLAN.md)
+│   └── init-template.test.mjs       # Unit tests for template initialization (node:test)
 ├── .agents/
 │   ├── agents/                      # Sub-agent definitions with explicit tool permissions
 │   │   ├── web-dev.md
@@ -78,10 +83,12 @@ webdev-multi-agent/
 │       ├── impeccable/
 │       ├── incremental-implementation/
 │       ├── browser-testing-with-devtools/
+│       │   └── references/devtools-recipes.md
 │       ├── tdd/
 │       ├── security-and-hardening/
 │       │   └── references/owasp-web-checklist.md
 │       ├── firebase-security-rules-auditor/
+│       │   └── references/db-policy-patterns.md
 │       ├── ci-cd-and-automation/
 │       └── shipping-and-launch/
 └── demo-app/                        # "Sprint Pulse" — End-to-End verified 375px demo app
@@ -105,22 +112,24 @@ webdev-multi-agent/
 | **Gemini CLI** | `GEMINI.md` (`@AGENTS.md`) | `.gemini/agents/*.md` | `.gemini/skills/<name>/` |
 | **Cursor** | `AGENTS.md` | `.cursor/agents/*.md` | `.cursor/skills/<name>/` |
 
-Mirror `.agents/` to your preferred tool in one command (preview first with `--dry-run`):
+Mirror `.agents/` to your preferred tool in one command (automatically maps `read_file -> Read, Glob, Grep` for Claude Code, prunes stale mirrored files with `--clean`, and verifies zero drift with `--check`):
 
 ```bash
-node scripts/sync-tools.mjs --target=all --dry-run
-node scripts/sync-tools.mjs --target=claude   # Supports: claude | cursor | gemini | codex | all
+npm run sync:dry-run                              # Preview sync across all targets
+node scripts/sync-tools.mjs --target=claude --clean  # Supports: claude | cursor | gemini | codex | all
+npm run sync:check                                # Verify mirrored files have zero drift on disk
 ```
 
 ---
 
 ## Validate Playbook & Skills
 
-Run the zero-dependency validator and test suites anytime you modify `AGENTS.md`, sub-agents, or skills (requires **Node.js >= 22**):
+Run the zero-dependency root validator and test suites anytime you modify `AGENTS.md`, sub-agents, or skills (requires **Node.js >= 22**):
 
 ```bash
-node scripts/validate-agents.mjs
-node --test scripts/validate-agents.test.mjs scripts/sync-tools.test.mjs
+npm run validate       # Validates AGENTS.md, sub-agent tool allowlists, skills & relative markdown links
+npm test               # Runs all root unit tests (validator, cross-tool sync & template initializer)
+npm run sync:dry-run   # Dry-runs cross-tool mirroring across Claude, Cursor, Gemini & Codex
 ```
 
 ---
@@ -149,4 +158,4 @@ npm start       # Serves http://127.0.0.1:4173 with strict CSP & security header
 
 1. Click **Use this template** on GitHub (or clone) to start your web project — `PLAN.md` is already reset as a clean blank template (see `demo-app/PLAN.example.md` for a completed example).
 2. Customize **Tooling Defaults** in `AGENTS.md` and stack-specific checks in `.agents/skills/` (e.g., swap `firebase-security-rules-auditor` for Supabase RLS or SQL policy checks if needed).
-3. Remove `demo-app/` once you are ready to scaffold your own app — `.github/workflows/ci.yml` will automatically skip the demo-app job while continuing to validate `.agents/` and secret hygiene on every PR.
+3. Run `npm run template:init` (preview first with `npm run template:init:dry-run`) once you are ready to scaffold your own app — it removes `demo-app/`, resets `PLAN.md` to a clean blank template, and re-validates `.agents/`, while `.github/workflows/ci.yml` automatically skips the demo-app job on every PR.

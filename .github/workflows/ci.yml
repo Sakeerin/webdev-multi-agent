@@ -46,14 +46,16 @@ jobs:
           fi
           echo "OK: No tracked secret or key files found."
 
-      - name: Validate AGENTS.md, sub-agents, and skills
-        run: node scripts/validate-agents.mjs
+      - name: Validate AGENTS.md, sub-agents, skills, and markdown links
+        run: npm run validate
 
-      - name: Run agent validator & cross-tool sync unit tests
-        run: node --test scripts/validate-agents.test.mjs scripts/sync-tools.test.mjs
+      - name: Run root validator, sync, and template-init unit tests
+        run: npm test
 
-      - name: Dry-run cross-tool sync script
-        run: node scripts/sync-tools.mjs --target=all --dry-run
+      - name: Dry-run cross-tool sync & template initializer
+        run: |
+          npm run sync:dry-run
+          npm run template:init:dry-run
 
   # Starter-kit note: removing demo-app/ automatically skips this job without breaking CI.
   # Add or update a job targeting your own application directory once scaffolded.
