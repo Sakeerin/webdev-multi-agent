@@ -29,3 +29,5 @@ Audit Firebase Security Rules (and equivalent DB/RLS policies if another backend
 - [ ] Default-deny rule confirmed; zero open `if true` write rules.
 - [ ] Auth, ownership, field immutability, and payload validation checked.
 - [ ] Clear `PASS` / `FAIL` / `N/A (non-Firebase project audited via equivalent policies)` verdict reported.
+
+See [references/db-policy-patterns.md](./references/db-policy-patterns.md) for Firestore and PostgreSQL/Supabase RLS patterns.
