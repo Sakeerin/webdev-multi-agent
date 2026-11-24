@@ -8,7 +8,7 @@
 - **Out of Scope**: `<What we will explicitly NOT change in this task>`
 
 ## 2. Acceptance Criteria
-- [ ] **Design (`375px` mobile-first)**: Component/layout spec or Stitch HTML reference with responsive breakpoints (`N/A` only for non-UI tasks).
+- [ ] **Design (`375px` mobile-first)**: Component/layout spec or Stitch HTML reference with responsive breakpoints (`N/A (non-UI)` only for non-UI tasks).
 - [ ] **Build (Incremental + TDD)**: Small, focused commits with tests written/updated first; `lint`, `typecheck`, `test`, and `build` pass.
 - [ ] **Verify (Automated + Browser)**: Automated tests pass; mobile (`375px`) and desktop screenshots inspected; mobile `LCP <= 2.5s`, `INP <= 200ms`, `CLS <= 0.1`; zero console/network errors.
 - [ ] **Secure (Audit + Rules)**: `security-auditor` reports `PASS` with `0` Critical/High findings across auth, validation, secrets, dependencies, and DB/Firebase rules.
@@ -22,7 +22,7 @@
 | # | Stage | Owner | Task Details | Status | Proof |
 | :--- | :--- | :--- | :--- | :---: | :--- |
 | 1 | Plan | Main Agent | Define scope, acceptance criteria & edge cases | [ ] | `PLAN.md` |
-| 2 | Design | `web-dev` | `375px` mobile-first UI spec (or `N/A` if non-UI) | [ ] | Pending |
+| 2 | Design | `web-dev` | `375px` mobile-first UI spec (or `N/A (non-UI)`) | [ ] | Pending |
 | 3 | Build | `web-dev` | Incremental vertical slices + tests first | [ ] | Pending |
 | 4 | Verify | `tester` | Automated tests + DevTools mobile/desktop & CWV | [ ] | Pending |
 | 5 | Secure | `security-auditor` | Auth, input validation, secrets, deps & rules audit | [ ] | Pending |

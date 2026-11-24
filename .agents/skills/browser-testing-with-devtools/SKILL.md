@@ -33,3 +33,5 @@ Verify live UI behavior, visual fidelity, runtime health, and mobile performance
 - [ ] Zero uncaught console errors and zero unexpected `4xx`/`5xx` network errors.
 - [ ] Mobile `LCP`, `INP`, and `CLS` recorded and compared against thresholds.
 - [ ] Report returns clear `PASS` or `FAIL` with reproduction steps for any defect.
+
+See [references/devtools-recipes.md](./references/devtools-recipes.md) for ready-to-use DevTools audit scripts.

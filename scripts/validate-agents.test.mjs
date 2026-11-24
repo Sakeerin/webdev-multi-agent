@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  ALLOWED_AGENT_TOOLS,
   MAX_AGENTS_MD_BYTES,
   parseFrontmatter,
   validateWorkspace,
@@ -378,5 +379,158 @@ describe('validateWorkspace (fixture edge cases)', () => {
         `Expected error mentioning ${disallowedTool}`
       );
     }
+  });
+
+  it('exports ALLOWED_AGENT_TOOLS and rejects unknown, misspelled, or foreign tool names', () => {
+    assert.equal(Object.isFrozen(ALLOWED_AGENT_TOOLS), true);
+    assert.deepEqual(ALLOWED_AGENT_TOOLS, [
+      'read_file',
+      'write_file',
+      'edit_file',
+      'run_command',
+      'search_web',
+    ]);
+
+    for (const invalidTool of ['read_fle', 'Bash']) {
+      const dir = makeFixture();
+      writeFixtureFile(
+        dir,
+        '.agents/agents/web-dev.md',
+        [
+          '---',
+          'name: web-dev',
+          'description: Uses invalid tool name.',
+          'skills: [frontend-ui-engineering]',
+          `tools: [read_file, ${invalidTool}]`,
+          '---',
+          'Body',
+        ].join('\n')
+      );
+      const res = validateWorkspace(dir);
+      assert.equal(res.ok, false, `Expected failure for invalid tool "${invalidTool}"`);
+      assert.ok(
+        res.errors.some(
+          (e) => e.includes(invalidTool) && /ALLOWED_AGENT_TOOLS|Allowed tools|unknown/i.test(e)
+        ),
+        `Expected error mentioning ${invalidTool} and ALLOWED_AGENT_TOOLS, got: ${res.errors.join('; ')}`
+      );
+    }
+
+    const searchWebDir = makeFixture();
+    writeFixtureFile(
+      searchWebDir,
+      '.agents/agents/web-dev.md',
+      [
+        '---',
+        'name: web-dev',
+        'description: Uses search_web tool.',
+        'skills: [frontend-ui-engineering]',
+        'tools: [read_file, search_web]',
+        '---',
+        'Body',
+      ].join('\n')
+    );
+    assert.equal(validateWorkspace(searchWebDir).ok, true);
+  });
+
+  it('validates relative Markdown links across .agents/ while ignoring code spans/fences and external schemes', () => {
+    // 1. Valid relative links, fragments, titles, code blocks, and external schemes -> PASS
+    const validDir = makeFixture();
+    writeFixtureFile(
+      validDir,
+      '.agents/skills/frontend-ui-engineering/references/check.md',
+      [
+        '# Reference Check',
+        '',
+        'Back to [skill](../SKILL.md#steps).',
+      ].join('\n')
+    );
+    writeFixtureFile(
+      validDir,
+      '.agents/skills/frontend-ui-engineering/SKILL.md',
+      [
+        '---',
+        'name: frontend-ui-engineering',
+        'description: Build accessible 375px mobile-first UI.',
+        '---',
+        '',
+        '# Frontend UI Engineering',
+        '',
+        'See [checklist](./references/check.md) and [titled](./references/check.md "Checklist").',
+        'Jump to [section](#steps) or [docs](https://example.com/docs) or [mail](mailto:dev@example.com).',
+        'Ignore [local](file:///tmp/demo.md) and [conv](conversation://abc).',
+        'Ignore inline `[inline-fake](./nope-inline.md)` link.',
+        '',
+        '```markdown',
+        '[fake](./does-not-exist.md)',
+        '```',
+        '',
+        '~~~markdown',
+        '[fake-tilde](./still-does-not-exist.md)',
+        '~~~',
+        '',
+      ].join('\n')
+    );
+    const validRes = validateWorkspace(validDir);
+    assert.equal(validRes.ok, true, `Unexpected errors: ${validRes.errors.join('; ')}`);
+
+    // 2. Broken relative link in skill -> FAIL
+    const brokenSkillDir = makeFixture();
+    writeFixtureFile(
+      brokenSkillDir,
+      '.agents/skills/frontend-ui-engineering/SKILL.md',
+      [
+        '---',
+        'name: frontend-ui-engineering',
+        'description: Build accessible 375px mobile-first UI.',
+        '---',
+        '',
+        'See [missing](./references/nope.md).',
+      ].join('\n')
+    );
+    const brokenSkillRes = validateWorkspace(brokenSkillDir);
+    assert.equal(brokenSkillRes.ok, false);
+    assert.ok(brokenSkillRes.errors.some((e) => e.includes('./references/nope.md')));
+
+    // 3. Broken relative link in agent -> FAIL
+    const brokenAgentDir = makeFixture();
+    writeFixtureFile(
+      brokenAgentDir,
+      '.agents/agents/web-dev.md',
+      [
+        '---',
+        'name: web-dev',
+        'description: Frontend engineer.',
+        'skills: [frontend-ui-engineering]',
+        'tools: [read_file]',
+        '---',
+        '',
+        'Read [missing-doc](./missing-agent-ref.md).',
+      ].join('\n')
+    );
+    const brokenAgentRes = validateWorkspace(brokenAgentDir);
+    assert.equal(brokenAgentRes.ok, false);
+    assert.ok(brokenAgentRes.errors.some((e) => e.includes('./missing-agent-ref.md')));
+
+    // 4. Relative link escaping rootDir -> FAIL
+    const escapeDir = makeFixture();
+    writeFixtureFile(
+      escapeDir,
+      '.agents/skills/frontend-ui-engineering/SKILL.md',
+      [
+        '---',
+        'name: frontend-ui-engineering',
+        'description: Build accessible 375px mobile-first UI.',
+        '---',
+        '',
+        'Bad [escape](../../../../etc/passwd).',
+      ].join('\n')
+    );
+    const escapeRes = validateWorkspace(escapeDir);
+    assert.equal(escapeRes.ok, false);
+    assert.ok(
+      escapeRes.errors.some((e) => e.includes('../../../../etc/passwd') && /outside|escape|root/i.test(e)),
+      `Expected root escape error, got: ${escapeRes.errors.join('; ')}`
+    );
   });
 });

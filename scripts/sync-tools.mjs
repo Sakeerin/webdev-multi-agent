@@ -3,6 +3,8 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
@@ -13,20 +15,26 @@ import { parseFrontmatter } from './validate-agents.mjs';
 export const SUPPORTED_TARGETS = Object.freeze(['claude', 'cursor', 'gemini', 'codex']);
 
 const CLAUDE_TOOL_MAP = Object.freeze({
-  read_file: 'Read',
-  write_file: 'Write',
-  edit_file: 'Edit',
-  run_command: 'Bash',
+  read_file: Object.freeze(['Read', 'Glob', 'Grep']),
+  write_file: Object.freeze(['Write']),
+  edit_file: Object.freeze(['Edit']),
+  run_command: Object.freeze(['Bash']),
+  search_web: Object.freeze(['WebSearch']),
 });
 
 export function mapClaudeTools(tools = []) {
   const mapped = [];
   const seen = new Set();
   for (const tool of tools) {
-    const claudeTool = CLAUDE_TOOL_MAP[tool];
-    if (claudeTool && !seen.has(claudeTool)) {
-      seen.add(claudeTool);
-      mapped.push(claudeTool);
+    const claudeTools = CLAUDE_TOOL_MAP[tool];
+    if (!claudeTools) {
+      continue;
+    }
+    for (const claudeTool of claudeTools) {
+      if (!seen.has(claudeTool)) {
+        seen.add(claudeTool);
+        mapped.push(claudeTool);
+      }
     }
   }
   return mapped;
@@ -96,6 +104,16 @@ function renderMirroredMarkdown({ stem, raw }) {
   return `${frontmatterBlock}\n${marker}\n\n${restBody}`;
 }
 
+function assertInsideDir(baseDir, candidatePath) {
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedCandidate = path.resolve(candidatePath);
+  const rel = path.relative(resolvedBase, resolvedCandidate);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Refusing path operation outside managed directory: ${candidatePath}`);
+  }
+  return resolvedCandidate;
+}
+
 function collectFilesRecursive(baseDir, currentDir = baseDir, results = []) {
   if (!existsSync(currentDir)) {
     return results;
@@ -115,26 +133,85 @@ function collectFilesRecursive(baseDir, currentDir = baseDir, results = []) {
   return results;
 }
 
-function writeOutputFile(rootDir, relPath, contentBufferOrString, dryRun, recordedFiles) {
-  const posixRel = relPath.replaceAll('\\', '/');
-  recordedFiles.push(posixRel);
-  if (dryRun) {
-    return;
+function collectExistingManagedFiles(resolvedRoot, targets) {
+  const managedFiles = [];
+
+  for (const currentTarget of targets) {
+    if (currentTarget === 'codex') {
+      const codexAgentsDir = path.join(resolvedRoot, '.codex', 'agents');
+      if (existsSync(codexAgentsDir)) {
+        const entries = readdirSync(codexAgentsDir, { withFileTypes: true }).sort((a, b) =>
+          a.name.localeCompare(b.name)
+        );
+        for (const entry of entries) {
+          if (entry.isFile() && entry.name.endsWith('.toml')) {
+            const absPath = assertInsideDir(codexAgentsDir, path.join(codexAgentsDir, entry.name));
+            managedFiles.push({ posixRel: `.codex/agents/${entry.name}`, absPath });
+          }
+        }
+      }
+      continue;
+    }
+
+    const toolDir = `.${currentTarget}`;
+    const agentsManagedDir = path.join(resolvedRoot, toolDir, 'agents');
+    if (existsSync(agentsManagedDir)) {
+      const entries = readdirSync(agentsManagedDir, { withFileTypes: true }).sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith('.md')) {
+          const absPath = assertInsideDir(
+            agentsManagedDir,
+            path.join(agentsManagedDir, entry.name)
+          );
+          managedFiles.push({ posixRel: `${toolDir}/agents/${entry.name}`, absPath });
+        }
+      }
+    }
+
+    const skillsManagedDir = path.join(resolvedRoot, toolDir, 'skills');
+    if (existsSync(skillsManagedDir)) {
+      for (const item of collectFilesRecursive(skillsManagedDir)) {
+        const absPath = assertInsideDir(skillsManagedDir, item.fullPath);
+        managedFiles.push({ posixRel: `${toolDir}/skills/${item.relPath}`, absPath });
+      }
+    }
   }
-  const absPath = path.join(rootDir, relPath);
-  mkdirSync(path.dirname(absPath), { recursive: true });
-  writeFileSync(absPath, contentBufferOrString);
+
+  return managedFiles;
 }
 
-export function syncTools(rootDir, { target = 'all', dryRun = false } = {}) {
+function pruneEmptyDirsRecursive(skillsRootDir, currentDir = skillsRootDir) {
+  if (!existsSync(currentDir)) {
+    return;
+  }
+  const entries = readdirSync(currentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const childDir = assertInsideDir(skillsRootDir, path.join(currentDir, entry.name));
+      pruneEmptyDirsRecursive(skillsRootDir, childDir);
+    }
+  }
+  if (currentDir !== skillsRootDir && readdirSync(currentDir).length === 0) {
+    assertInsideDir(skillsRootDir, currentDir);
+    rmdirSync(currentDir);
+  }
+}
+
+export function syncTools(
+  rootDir,
+  { target = 'all', dryRun = false, clean = false, check = false } = {}
+) {
   if (target !== 'all' && !SUPPORTED_TARGETS.includes(target)) {
     throw new Error(
       `Unsupported target "${target}". Supported targets: all, ${SUPPORTED_TARGETS.join(', ')}.`
     );
   }
 
-  const agentsDir = path.join(rootDir, '.agents', 'agents');
-  const skillsDir = path.join(rootDir, '.agents', 'skills');
+  const resolvedRoot = path.resolve(rootDir);
+  const agentsDir = path.join(resolvedRoot, '.agents', 'agents');
+  const skillsDir = path.join(resolvedRoot, '.agents', 'skills');
 
   if (!existsSync(agentsDir)) {
     throw new Error(`Missing source sub-agents directory: ${agentsDir}`);
@@ -163,7 +240,15 @@ export function syncTools(rootDir, { target = 'all', dryRun = false } = {}) {
     content: readFileSync(entry.fullPath),
   }));
 
-  const files = [];
+  const plannedEntries = [];
+  const addPlannedFile = (relPath, contentBufferOrString) => {
+    const posixRel = relPath.replaceAll('\\', '/');
+    const absPath = assertInsideDir(resolvedRoot, path.join(resolvedRoot, relPath));
+    const buffer = Buffer.isBuffer(contentBufferOrString)
+      ? contentBufferOrString
+      : Buffer.from(contentBufferOrString, 'utf8');
+    plannedEntries.push({ posixRel, absPath, buffer });
+  };
 
   for (const currentTarget of targets) {
     if (currentTarget === 'codex') {
@@ -174,7 +259,7 @@ export function syncTools(rootDir, { target = 'all', dryRun = false } = {}) {
           skills: Array.isArray(agent.data.skills) ? agent.data.skills : [],
           body: agent.body,
         });
-        writeOutputFile(rootDir, `.codex/agents/${agent.stem}.toml`, tomlContent, dryRun, files);
+        addPlannedFile(`.codex/agents/${agent.stem}.toml`, tomlContent);
       }
       continue;
     }
@@ -186,41 +271,88 @@ export function syncTools(rootDir, { target = 'all', dryRun = false } = {}) {
         currentTarget === 'claude'
           ? renderClaudeAgentMarkdown(agent)
           : renderMirroredMarkdown(agent);
-      writeOutputFile(rootDir, `${toolDir}/agents/${agent.stem}.md`, renderedAgent, dryRun, files);
+      addPlannedFile(`${toolDir}/agents/${agent.stem}.md`, renderedAgent);
     }
 
     for (const skillFile of skillFiles) {
-      writeOutputFile(
-        rootDir,
-        `${toolDir}/skills/${skillFile.relPath}`,
-        skillFile.content,
-        dryRun,
-        files
-      );
+      addPlannedFile(`${toolDir}/skills/${skillFile.relPath}`, skillFile.content);
     }
   }
 
-  return { targets, dryRun, files };
+  const files = plannedEntries.map((entry) => entry.posixRel);
+  const plannedSet = new Set(files);
+  const existingManaged =
+    clean || check ? collectExistingManagedFiles(resolvedRoot, targets) : [];
+  const staleItems = existingManaged.filter((item) => !plannedSet.has(item.posixRel));
+  const stale = staleItems.map((item) => item.posixRel);
+  const removed = clean ? [...stale] : [];
+
+  if (check) {
+    const drifted = [];
+    for (const entry of plannedEntries) {
+      if (!existsSync(entry.absPath) || !readFileSync(entry.absPath).equals(entry.buffer)) {
+        drifted.push(entry.posixRel);
+      }
+    }
+    return {
+      targets,
+      dryRun,
+      check: true,
+      inSync: drifted.length === 0 && stale.length === 0,
+      files,
+      removed,
+      drifted,
+      stale,
+    };
+  }
+
+  if (!dryRun) {
+    for (const entry of plannedEntries) {
+      mkdirSync(path.dirname(entry.absPath), { recursive: true });
+      writeFileSync(entry.absPath, entry.buffer);
+    }
+
+    if (clean) {
+      for (const item of staleItems) {
+        unlinkSync(item.absPath);
+      }
+      for (const currentTarget of targets) {
+        if (currentTarget !== 'codex') {
+          pruneEmptyDirsRecursive(path.join(resolvedRoot, `.${currentTarget}`, 'skills'));
+        }
+      }
+    }
+  }
+
+  return { targets, dryRun, check: false, files, removed };
 }
 
 function parseCliArgs(argv) {
   let target = 'all';
   let dryRun = false;
+  let clean = false;
+  let check = false;
 
   for (const arg of argv) {
     if (arg === '--dry-run') {
       dryRun = true;
+    } else if (arg === '--clean') {
+      clean = true;
+    } else if (arg === '--check') {
+      check = true;
     } else if (arg.startsWith('--target=')) {
       target = arg.slice('--target='.length);
     } else if (arg === '--help' || arg === '-h') {
-      return { help: true, target, dryRun };
+      return { help: true, target, dryRun, clean, check };
     } else {
       throw new Error(`Unknown argument: "${arg}".`);
     }
   }
 
-  return { help: false, target, dryRun };
+  return { help: false, target, dryRun, clean, check };
 }
+
+const USAGE_TEXT = `Usage: node scripts/sync-tools.mjs [--target=all|${SUPPORTED_TARGETS.join('|')}] [--dry-run] [--clean] [--check]`;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isEntrypoint =
@@ -230,23 +362,47 @@ if (isEntrypoint) {
   try {
     const args = parseCliArgs(process.argv.slice(2));
     if (args.help) {
-      console.log(
-        `Usage: node scripts/sync-tools.mjs [--target=all|${SUPPORTED_TARGETS.join('|')}] [--dry-run]`
-      );
+      console.log(USAGE_TEXT);
       process.exit(0);
     }
 
     const rootDir = path.resolve(__dirname, '..');
-    const result = syncTools(rootDir, { target: args.target, dryRun: args.dryRun });
+    const result = syncTools(rootDir, {
+      target: args.target,
+      dryRun: args.dryRun,
+      clean: args.clean,
+      check: args.check,
+    });
+
+    if (args.check) {
+      if (result.inSync) {
+        console.log(
+          `Sync check passed: ${result.files.length} file(s) in sync across target(s) [${result.targets.join(', ')}].`
+        );
+        process.exit(0);
+      }
+      console.error(
+        `Sync check failed across target(s) [${result.targets.join(', ')}] (${result.drifted.length} drifted, ${result.stale.length} stale):`
+      );
+      for (const file of result.drifted) {
+        console.error(`  - [drifted] ${file}`);
+      }
+      for (const file of result.stale) {
+        console.error(`  - [stale] ${file}`);
+      }
+      process.exit(1);
+    }
+
     const modeLabel = result.dryRun ? 'Dry-run complete' : 'Synced';
+    const cleanSuffix = args.clean
+      ? ` (${result.removed.length} stale file(s) ${result.dryRun ? 'would be removed' : 'removed'})`
+      : '';
     console.log(
-      `${modeLabel}: ${result.files.length} file(s) across target(s) [${result.targets.join(', ')}].`
+      `${modeLabel}: ${result.files.length} file(s) across target(s) [${result.targets.join(', ')}]${cleanSuffix}.`
     );
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
-    console.error(
-      `Usage: node scripts/sync-tools.mjs [--target=all|${SUPPORTED_TARGETS.join('|')}] [--dry-run]`
-    );
+    console.error(USAGE_TEXT);
     process.exit(1);
   }
 }
