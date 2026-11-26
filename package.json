@@ -8,7 +8,7 @@
   },
   "scripts": {
     "validate": "node scripts/validate-agents.mjs",
-    "test": "node --test \"scripts/*.test.mjs\"",
+    "test": "node --test \"scripts/**/*.test.mjs\"",
     "sync": "node scripts/sync-tools.mjs",
     "sync:dry-run": "node scripts/sync-tools.mjs --target=all --dry-run",
     "sync:check": "node scripts/sync-tools.mjs --target=all --check",

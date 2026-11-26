@@ -1,11 +1,35 @@
+# Dependencies
 node_modules/
+
+# Build & Framework Outputs
+dist/
+build/
+out/
 demo-app/dist/
+.next/
+.nuxt/
+.svelte-kit/
+.astro/
+.output/
+.vercel/
+.netlify/
+.firebase/
+*.tsbuildinfo
+
+# Test & Coverage Artifacts
+coverage/
+playwright-report/
+test-results/
+
+# Environment & Secrets
 .env
 .env.*
 !.env.example
-*.log
-.DS_Store
-Thumbs.db
 *.pem
 *.key
 *serviceAccount*.json
+
+# Logs & OS Metadata
+*.log
+.DS_Store
+Thumbs.db

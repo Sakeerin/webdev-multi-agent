@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -52,6 +52,10 @@ function assertDirectChildPath(resolvedRoot, childName) {
   return targetPath;
 }
 
+function isSymlinkPath(targetPath) {
+  return Boolean(lstatSync(targetPath, { throwIfNoEntry: false })?.isSymbolicLink());
+}
+
 export function initTemplate(rootDir, { dryRun = false } = {}) {
   const resolvedRoot = path.resolve(rootDir);
 
@@ -66,13 +70,43 @@ export function initTemplate(rootDir, { dryRun = false } = {}) {
 
   const demoAppDir = assertDirectChildPath(resolvedRoot, 'demo-app');
   const planMdPath = assertDirectChildPath(resolvedRoot, 'PLAN.md');
+  const packageJsonPath = assertDirectChildPath(resolvedRoot, 'package.json');
 
-  const hasDemoApp = existsSync(demoAppDir);
-  if (hasDemoApp && lstatSync(demoAppDir).isSymbolicLink()) {
+  if (isSymlinkPath(demoAppDir)) {
     throw new Error(`Refusing to remove symbolic link at ${demoAppDir}.`);
   }
-  if (existsSync(planMdPath) && lstatSync(planMdPath).isSymbolicLink()) {
+  if (isSymlinkPath(planMdPath)) {
     throw new Error(`Refusing to overwrite symbolic link at ${planMdPath}.`);
+  }
+  if (isSymlinkPath(packageJsonPath)) {
+    throw new Error(`Refusing to modify symbolic link at ${packageJsonPath}.`);
+  }
+
+  const hasDemoApp = existsSync(demoAppDir);
+
+  let parsedPkg = null;
+  let cleanedPackageScripts = [];
+  if (existsSync(packageJsonPath)) {
+    let rawPkg;
+    try {
+      rawPkg = readFileSync(packageJsonPath, 'utf8');
+      parsedPkg = JSON.parse(rawPkg);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Cannot parse package.json at ${packageJsonPath}: ${detail}`);
+    }
+    if (!parsedPkg || typeof parsedPkg !== 'object' || Array.isArray(parsedPkg)) {
+      throw new Error(`Invalid package.json root object at ${packageJsonPath}.`);
+    }
+    if (
+      parsedPkg.scripts &&
+      typeof parsedPkg.scripts === 'object' &&
+      !Array.isArray(parsedPkg.scripts)
+    ) {
+      cleanedPackageScripts = Object.keys(parsedPkg.scripts).filter((key) =>
+        key.startsWith('demo:')
+      );
+    }
   }
 
   if (dryRun) {
@@ -80,12 +114,20 @@ export function initTemplate(rootDir, { dryRun = false } = {}) {
       dryRun: true,
       removedDemoApp: hasDemoApp,
       updatedPlan: 'PLAN.md',
+      cleanedPackageScripts,
       validation: null,
     };
   }
 
   if (hasDemoApp) {
     rmSync(demoAppDir, { recursive: true, force: false });
+  }
+
+  if (parsedPkg && cleanedPackageScripts.length > 0) {
+    for (const scriptKey of cleanedPackageScripts) {
+      delete parsedPkg.scripts[scriptKey];
+    }
+    writeFileSync(packageJsonPath, `${JSON.stringify(parsedPkg, null, 2)}\n`, 'utf8');
   }
 
   writeFileSync(planMdPath, BLANK_PLAN_TEMPLATE, 'utf8');
@@ -101,6 +143,7 @@ export function initTemplate(rootDir, { dryRun = false } = {}) {
     dryRun: false,
     removedDemoApp: hasDemoApp,
     updatedPlan: 'PLAN.md',
+    cleanedPackageScripts,
     validation,
   };
 }
@@ -137,16 +180,20 @@ if (isEntrypoint) {
 
     const rootDir = path.resolve(__dirname, '..');
     const result = initTemplate(rootDir, { dryRun: args.dryRun });
+    const scriptsSuffix =
+      result.cleanedPackageScripts.length > 0
+        ? ` (${result.dryRun ? 'would strip' : 'stripped'} ${result.cleanedPackageScripts.join(', ')} from package.json)`
+        : '';
     if (result.dryRun) {
       const demoNote = result.removedDemoApp
         ? 'would remove demo-app/ and reset PLAN.md'
         : 'demo-app/ already absent; would reset PLAN.md';
-      console.log(`Dry-run complete: ${demoNote}.`);
+      console.log(`Dry-run complete: ${demoNote}${scriptsSuffix}.`);
     } else {
       const demoNote = result.removedDemoApp
         ? 'removed demo-app/ and reset PLAN.md'
         : 'reset PLAN.md (demo-app/ already absent)';
-      console.log(`Template initialized: ${demoNote}. Playbook validation passed.`);
+      console.log(`Template initialized: ${demoNote}${scriptsSuffix}. Playbook validation passed.`);
     }
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
