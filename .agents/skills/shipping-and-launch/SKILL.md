@@ -30,3 +30,5 @@ Ship verified, audited changes safely with a clean PR, green CI gates, and a rol
 - [ ] All prior step proofs (`Plan`, `Verify`, `Secure`) confirmed present.
 - [ ] PR description is complete and CI status is reported.
 - [ ] Deployment URL and smoke-test result recorded (if deployed).
+
+See [references/hosting-configs.md](./references/hosting-configs.md) for production security headers, CSP, and immutable caching configs across Firebase, Vercel, Netlify, and Cloud Run.

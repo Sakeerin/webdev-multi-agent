@@ -34,3 +34,5 @@ Build maintainable, accessible, mobile-first web interfaces starting at `375px`.
 - [ ] Semantic HTML and keyboard focus order verified.
 - [ ] Loading, empty, and error states implemented.
 - [ ] Type-check, lint, and production build succeed with zero errors.
+
+See [references/responsive-and-a11y-checklist.md](./references/responsive-and-a11y-checklist.md) for responsive grid patterns, fluid tokens, WCAG 2.1 AA checks, and zero-CLS rules.
