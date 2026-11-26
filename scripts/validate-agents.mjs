@@ -120,7 +120,7 @@ export function parseFrontmatter(raw) {
           break;
         }
       }
-      data[key] = items;
+      data[key] = items.length > 0 ? items : '';
     } else if (rawVal.startsWith('[') && rawVal.endsWith(']')) {
       const inner = rawVal.slice(1, -1).trim();
       data[key] =
@@ -268,7 +268,22 @@ function validateRelativeMarkdownLinks(rootDir, markdownFilePath, rawContent, er
       continue;
     }
 
-    const resolvedTarget = path.resolve(path.dirname(markdownFilePath), relPathPart);
+    let decodedPathPart;
+    try {
+      decodedPathPart = decodeURIComponent(relPathPart);
+    } catch {
+      errors.push(
+        `Malformed percent-encoding in Markdown link "${rawTarget}" in ${relSource}.`
+      );
+      continue;
+    }
+
+    if (decodedPathPart.includes('\0')) {
+      errors.push(`Invalid null byte in Markdown link "${rawTarget}" in ${relSource}.`);
+      continue;
+    }
+
+    const resolvedTarget = path.resolve(path.dirname(markdownFilePath), decodedPathPart);
     const relToRoot = path.relative(resolvedRoot, resolvedTarget);
     if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) {
       errors.push(
@@ -322,6 +337,15 @@ export function validateWorkspace(rootDir) {
       if (!new RegExp(`\\b${stage}\\b`).test(agentsMdContent)) {
         errors.push(`AGENTS.md is missing required pipeline stage "${stage}".`);
       }
+    }
+    validateRelativeMarkdownLinks(rootDir, agentsMdPath, agentsMdContent, errors);
+  }
+
+  for (const optionalDoc of ['README.md', 'CUSTOMIZING.md', '.github/PULL_REQUEST_TEMPLATE.md']) {
+    const optionalDocPath = path.join(rootDir, optionalDoc);
+    if (existsSync(optionalDocPath) && statSync(optionalDocPath).isFile()) {
+      const optionalDocContent = readFileSync(optionalDocPath, 'utf8');
+      validateRelativeMarkdownLinks(rootDir, optionalDocPath, optionalDocContent, errors);
     }
   }
 

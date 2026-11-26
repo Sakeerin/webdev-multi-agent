@@ -1,7 +1,7 @@
 ## Summary
 <!-- Concise description of what changed and why. -->
 
-- **Plan (`Step 1`)**: [PLAN.md](./PLAN.md)
+- **Plan (`Step 1`)**: [PLAN.md](../PLAN.md)
 - **Design Spec (`Step 2`)**: <!-- Link to DESIGN_SPEC / Stitch screen, or mark N/A (non-UI) -->
 
 ---

@@ -148,6 +148,27 @@ describe('parseFrontmatter', () => {
     assert.equal(parsed.body.trim(), '# Heading\nBody content.');
   });
 
+  it('parses empty YAML scalar keys as empty strings while keeping list blocks and [] as arrays', () => {
+    const raw = [
+      '---',
+      'description:',
+      'globs:',
+      'name: test',
+      'emptyList: []',
+      'skills:',
+      '  - a',
+      '---',
+      'Body',
+    ].join('\n');
+    const parsed = parseFrontmatter(raw);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.data.description, '');
+    assert.equal(parsed.data.globs, '');
+    assert.equal(parsed.data.name, 'test');
+    assert.deepEqual(parsed.data.emptyList, []);
+    assert.deepEqual(parsed.data.skills, ['a']);
+  });
+
   it('rejects missing opening fence, unclosed fence, and empty frontmatter', () => {
     assert.equal(parseFrontmatter('# No frontmatter\n').ok, false);
     assert.equal(parseFrontmatter('---\nname: test\n').ok, false);
@@ -532,5 +553,97 @@ describe('validateWorkspace (fixture edge cases)', () => {
       escapeRes.errors.some((e) => e.includes('../../../../etc/passwd') && /outside|escape|root/i.test(e)),
       `Expected root escape error, got: ${escapeRes.errors.join('; ')}`
     );
+  });
+
+  it('decodes %20 URI sequences in relative links and reports malformed %-encoding or %00 cleanly', () => {
+    const validEncodedDir = makeFixture();
+    writeFixtureFile(
+      validEncodedDir,
+      '.agents/skills/frontend-ui-engineering/references/my doc.md',
+      '# Spaced Reference\n'
+    );
+    writeFixtureFile(
+      validEncodedDir,
+      '.agents/skills/frontend-ui-engineering/SKILL.md',
+      [
+        '---',
+        'name: frontend-ui-engineering',
+        'description: Build accessible 375px mobile-first UI.',
+        '---',
+        '',
+        'See [spaced doc](./references/my%20doc.md#top).',
+      ].join('\n')
+    );
+    const validEncodedRes = validateWorkspace(validEncodedDir);
+    assert.equal(
+      validEncodedRes.ok,
+      true,
+      `Expected %20 link to resolve, got: ${validEncodedRes.errors.join('; ')}`
+    );
+
+    const malformedDir = makeFixture();
+    writeFixtureFile(
+      malformedDir,
+      '.agents/skills/frontend-ui-engineering/SKILL.md',
+      [
+        '---',
+        'name: frontend-ui-engineering',
+        'description: Build accessible 375px mobile-first UI.',
+        '---',
+        '',
+        'See [malformed](./bad%ZZ.md) and [encoded-null](./bad%00.md).',
+      ].join('\n')
+    );
+    const malformedRes = validateWorkspace(malformedDir);
+    assert.equal(malformedRes.ok, false);
+    assert.ok(malformedRes.errors.some((e) => e.includes('./bad%ZZ.md')));
+    assert.ok(malformedRes.errors.some((e) => e.includes('./bad%00.md')));
+  });
+
+  it('validates relative Markdown links in AGENTS.md and optional README.md, CUSTOMIZING.md, and .github/PULL_REQUEST_TEMPLATE.md', () => {
+    const brokenReadmeDir = makeFixture();
+    writeFixtureFile(
+      brokenReadmeDir,
+      'README.md',
+      '# Repo\n\nSee [missing guide](./DOES_NOT_EXIST.md).\n'
+    );
+    const brokenReadmeRes = validateWorkspace(brokenReadmeDir);
+    assert.equal(brokenReadmeRes.ok, false);
+    assert.ok(brokenReadmeRes.errors.some((e) => e.includes('./DOES_NOT_EXIST.md')));
+
+    const brokenCustomizingDir = makeFixture();
+    writeFixtureFile(
+      brokenCustomizingDir,
+      'CUSTOMIZING.md',
+      '# Customizing\n\nSee [bad](./nope-custom.md).\n'
+    );
+    const brokenCustomizingRes = validateWorkspace(brokenCustomizingDir);
+    assert.equal(brokenCustomizingRes.ok, false);
+    assert.ok(brokenCustomizingRes.errors.some((e) => e.includes('./nope-custom.md')));
+
+    const brokenPrTemplateDir = makeFixture();
+    writeFixtureFile(
+      brokenPrTemplateDir,
+      '.github/PULL_REQUEST_TEMPLATE.md',
+      '- Plan: [PLAN.md](./PLAN.md)\n'
+    );
+    const brokenPrTemplateRes = validateWorkspace(brokenPrTemplateDir);
+    assert.equal(brokenPrTemplateRes.ok, false);
+    assert.ok(brokenPrTemplateRes.errors.some((e) => e.includes('./PLAN.md')));
+
+    const brokenAgentsMdDir = makeFixture();
+    writeFixtureFile(
+      brokenAgentsMdDir,
+      'AGENTS.md',
+      [
+        '# AGENTS.md',
+        'Pipeline stages: Plan, Design, Build, Verify, Secure, Ship.',
+        'Sub-agents: `web-dev`, `security-auditor`.',
+        'Broken link: [ghost](./ghost-playbook.md).',
+      ].join('\n')
+    );
+    const brokenAgentsMdRes = validateWorkspace(brokenAgentsMdDir);
+    assert.equal(brokenAgentsMdRes.ok, false);
+    assert.ok(brokenAgentsMdRes.errors.some((e) => e.includes('./ghost-playbook.md')));
   });
 });
