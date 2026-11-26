@@ -56,6 +56,7 @@ webdev-multi-agent/
 ├── AGENTS.md                        # Main Agent Orchestrator Playbook (single source of truth)
 ├── CLAUDE.md                        # Cross-tool bridge (@AGENTS.md for Claude Code)
 ├── GEMINI.md                        # Cross-tool bridge (@AGENTS.md for Gemini CLI)
+├── CUSTOMIZING.md                   # Guide for adapting skills, sub-agents, CI & hosting to your stack
 ├── LICENSE                          # MIT License
 ├── PLAN.md                          # Clean blank task execution plan template
 ├── package.json                     # Zero-dependency root scripts (validate, test, sync, template:init)
@@ -70,7 +71,7 @@ webdev-multi-agent/
 │   ├── validate-agents.test.mjs     # Unit tests for agent/skill validation (node:test)
 │   ├── sync-tools.mjs               # Mirror .agents/ to Claude, Cursor, Gemini, or Codex (--clean / --check)
 │   ├── sync-tools.test.mjs          # Unit tests for cross-tool sync (node:test)
-│   ├── init-template.mjs            # 1-command starter-kit initializer (removes demo-app/ & resets PLAN.md)
+│   ├── init-template.mjs            # 1-command starter-kit initializer (removes demo-app/, strips demo:* & resets PLAN.md)
 │   └── init-template.test.mjs       # Unit tests for template initialization (node:test)
 ├── .agents/
 │   ├── agents/                      # Sub-agent definitions with explicit tool permissions
@@ -80,6 +81,7 @@ webdev-multi-agent/
 │   │   └── devops.md
 │   └── skills/                      # 9 modular skills (Progressive Disclosure SKILL.md)
 │       ├── frontend-ui-engineering/
+│       │   └── references/responsive-and-a11y-checklist.md
 │       ├── impeccable/
 │       ├── incremental-implementation/
 │       ├── browser-testing-with-devtools/
@@ -91,6 +93,7 @@ webdev-multi-agent/
 │       │   └── references/db-policy-patterns.md
 │       ├── ci-cd-and-automation/
 │       └── shipping-and-launch/
+│           └── references/hosting-configs.md
 └── demo-app/                        # "Sprint Pulse" — End-to-End verified 375px demo app
     ├── DESIGN_SPEC.md               # 375px mobile-first design spec & WCAG AA contrast table
     ├── PLAN.example.md              # Completed example PLAN.md from the Sprint Pulse run
@@ -110,7 +113,7 @@ webdev-multi-agent/
 | **Claude Code** | `CLAUDE.md` (`@AGENTS.md`) | `.claude/agents/*.md` | `.claude/skills/<name>/` |
 | **Codex** | `AGENTS.md` | `.codex/agents/*.toml` | `.agents/skills/<name>/` |
 | **Gemini CLI** | `GEMINI.md` (`@AGENTS.md`) | `.gemini/agents/*.md` | `.gemini/skills/<name>/` |
-| **Cursor** | `AGENTS.md` | `.cursor/agents/*.md` | `.cursor/skills/<name>/` |
+| **Cursor** | `AGENTS.md + .cursor/rules/orchestrator.mdc` | `.cursor/agents/*.md` | `.cursor/skills/<name>/` |
 
 Mirror `.agents/` to your preferred tool in one command (automatically maps `read_file -> Read, Glob, Grep` for Claude Code, prunes stale mirrored files with `--clean`, and verifies zero drift with `--check`):
 
@@ -157,5 +160,5 @@ npm start       # Serves http://127.0.0.1:4173 with strict CSP & security header
 ## Using This Repo as a Starter Kit
 
 1. Click **Use this template** on GitHub (or clone) to start your web project — `PLAN.md` is already reset as a clean blank template (see `demo-app/PLAN.example.md` for a completed example).
-2. Customize **Tooling Defaults** in `AGENTS.md` and stack-specific checks in `.agents/skills/` (e.g., swap `firebase-security-rules-auditor` for Supabase RLS or SQL policy checks if needed).
-3. Run `npm run template:init` (preview first with `npm run template:init:dry-run`) once you are ready to scaffold your own app — it removes `demo-app/`, resets `PLAN.md` to a clean blank template, and re-validates `.agents/`, while `.github/workflows/ci.yml` automatically skips the demo-app job on every PR.
+2. Follow [CUSTOMIZING.md](./CUSTOMIZING.md) to tailor **Tooling Defaults** in `AGENTS.md`, stack-specific checks in `.agents/skills/` (e.g., Next.js/Vite/Astro, Supabase RLS, or hosting headers), and custom sub-agents.
+3. Run `npm run template:init` (preview first with `npm run template:init:dry-run`) once you are ready to scaffold your own app — it removes `demo-app/`, strips `demo:*` scripts from `package.json`, resets `PLAN.md` to a clean blank template, and re-validates `.agents/`, while `.github/workflows/ci.yml` automatically skips the demo-app job on every PR.
