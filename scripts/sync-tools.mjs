@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -58,7 +59,10 @@ function escapeTomlMultilineString(value) {
 
 export function renderCodexToml({ name, description, skills = [], body = '' }) {
   const skillsArray = skills.map((s) => `"${escapeTomlBasicString(s)}"`).join(', ');
-  const normalizedBody = escapeTomlMultilineString(body.trimEnd());
+  const rewrittenBody = String(body)
+    .replaceAll('](../skills/', '](../../.agents/skills/')
+    .replaceAll('<../skills/', '<../../.agents/skills/');
+  const normalizedBody = escapeTomlMultilineString(rewrittenBody.trimEnd());
   const trailingNewline = normalizedBody.endsWith('"') ? '\n' : '\n';
 
   return [
@@ -75,11 +79,11 @@ export function renderCodexToml({ name, description, skills = [], body = '' }) {
 function renderClaudeAgentMarkdown({ stem, data, body }) {
   const mappedTools = mapClaudeTools(Array.isArray(data.tools) ? data.tools : []);
   const skills = Array.isArray(data.skills) ? data.skills : [];
-  const skillsLines = skills.map((skill) => `  - ${skill}`).join('\n');
+  const skillsLines = skills.map((skill) => `  - ${JSON.stringify(skill)}`).join('\n');
 
   return [
     '---',
-    `name: ${data.name ?? stem}`,
+    `name: ${JSON.stringify(data.name ?? stem)}`,
     `description: ${JSON.stringify(data.description ?? '')}`,
     `tools: ${mappedTools.join(', ')}`,
     'skills:',
@@ -88,6 +92,26 @@ function renderClaudeAgentMarkdown({ stem, data, body }) {
     `<!-- Generated from .agents/agents/${stem}.md by scripts/sync-tools.mjs -->`,
     '',
     body.replace(/^\r?\n/, ''),
+  ].join('\n');
+}
+
+function renderCursorOrchestratorRule() {
+  return [
+    '---',
+    'description: "Deterministic 6-step multi-agent orchestrator workflow (Plan -> Design -> Build -> Verify -> Secure -> Ship)"',
+    'globs:',
+    'alwaysApply: true',
+    '---',
+    '<!-- Generated from AGENTS.md by scripts/sync-tools.mjs -->',
+    '',
+    '# Multi-Agent Orchestrator Rule',
+    '',
+    'Follow the deterministic 6-step pipeline (`Plan -> Design -> Build -> Verify -> Secure -> Ship`), proof-driven handoffs, and 2-strike circuit breaker defined in [AGENTS.md](../../AGENTS.md).',
+    '',
+    '- Delegate specialized stages to the sub-agents in `.cursor/agents/` and skills in `.cursor/skills/`.',
+    '- Maintain task scope, acceptance criteria, and strike counters in `PLAN.md` before building.',
+    '- Never skip `Step 5 (Secure)` or `Step 6 (Ship)`, and run `git status --porcelain` immediately after read-only security audits.',
+    '',
   ].join('\n');
 }
 
@@ -114,7 +138,42 @@ function assertInsideDir(baseDir, candidatePath) {
   return resolvedCandidate;
 }
 
+function assertNotSymlinkDir(dirPath) {
+  if (lstatSync(dirPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error(`Refusing to operate on symbolic link directory: ${dirPath}`);
+  }
+}
+
+function assertNotSymlinkFile(filePath) {
+  if (lstatSync(filePath, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error(`Refusing to operate on symbolic link file: ${filePath}`);
+  }
+}
+
+function assertManagedDirsSafe(resolvedRoot, targets) {
+  assertNotSymlinkDir(path.join(resolvedRoot, '.agents'));
+  assertNotSymlinkDir(path.join(resolvedRoot, '.agents', 'agents'));
+  assertNotSymlinkDir(path.join(resolvedRoot, '.agents', 'skills'));
+
+  for (const currentTarget of targets) {
+    if (currentTarget === 'codex') {
+      assertNotSymlinkDir(path.join(resolvedRoot, '.codex'));
+      assertNotSymlinkDir(path.join(resolvedRoot, '.codex', 'agents'));
+      continue;
+    }
+
+    const toolDir = path.join(resolvedRoot, `.${currentTarget}`);
+    assertNotSymlinkDir(toolDir);
+    assertNotSymlinkDir(path.join(toolDir, 'agents'));
+    assertNotSymlinkDir(path.join(toolDir, 'skills'));
+    if (currentTarget === 'cursor') {
+      assertNotSymlinkDir(path.join(toolDir, 'rules'));
+    }
+  }
+}
+
 function collectFilesRecursive(baseDir, currentDir = baseDir, results = []) {
+  assertNotSymlinkDir(currentDir);
   if (!existsSync(currentDir)) {
     return results;
   }
@@ -123,6 +182,9 @@ function collectFilesRecursive(baseDir, currentDir = baseDir, results = []) {
   );
   for (const entry of entries) {
     const fullPath = path.join(currentDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Refusing to traverse symbolic link inside managed directory: ${fullPath}`);
+    }
     if (entry.isDirectory()) {
       collectFilesRecursive(baseDir, fullPath, results);
     } else if (entry.isFile()) {
@@ -144,8 +206,12 @@ function collectExistingManagedFiles(resolvedRoot, targets) {
           a.name.localeCompare(b.name)
         );
         for (const entry of entries) {
+          const entryPath = path.join(codexAgentsDir, entry.name);
+          if (entry.isSymbolicLink()) {
+            throw new Error(`Refusing to operate on symbolic link file: ${entryPath}`);
+          }
           if (entry.isFile() && entry.name.endsWith('.toml')) {
-            const absPath = assertInsideDir(codexAgentsDir, path.join(codexAgentsDir, entry.name));
+            const absPath = assertInsideDir(codexAgentsDir, entryPath);
             managedFiles.push({ posixRel: `.codex/agents/${entry.name}`, absPath });
           }
         }
@@ -160,11 +226,12 @@ function collectExistingManagedFiles(resolvedRoot, targets) {
         a.name.localeCompare(b.name)
       );
       for (const entry of entries) {
+        const entryPath = path.join(agentsManagedDir, entry.name);
+        if (entry.isSymbolicLink()) {
+          throw new Error(`Refusing to operate on symbolic link file: ${entryPath}`);
+        }
         if (entry.isFile() && entry.name.endsWith('.md')) {
-          const absPath = assertInsideDir(
-            agentsManagedDir,
-            path.join(agentsManagedDir, entry.name)
-          );
+          const absPath = assertInsideDir(agentsManagedDir, entryPath);
           managedFiles.push({ posixRel: `${toolDir}/agents/${entry.name}`, absPath });
         }
       }
@@ -177,19 +244,39 @@ function collectExistingManagedFiles(resolvedRoot, targets) {
         managedFiles.push({ posixRel: `${toolDir}/skills/${item.relPath}`, absPath });
       }
     }
+
+    if (currentTarget === 'cursor') {
+      const cursorRulesDir = path.join(resolvedRoot, '.cursor', 'rules');
+      const orchestratorMdcPath = assertInsideDir(
+        cursorRulesDir,
+        path.join(cursorRulesDir, 'orchestrator.mdc')
+      );
+      assertNotSymlinkFile(orchestratorMdcPath);
+      if (existsSync(orchestratorMdcPath)) {
+        managedFiles.push({
+          posixRel: '.cursor/rules/orchestrator.mdc',
+          absPath: orchestratorMdcPath,
+        });
+      }
+    }
   }
 
   return managedFiles;
 }
 
 function pruneEmptyDirsRecursive(skillsRootDir, currentDir = skillsRootDir) {
+  assertNotSymlinkDir(currentDir);
   if (!existsSync(currentDir)) {
     return;
   }
   const entries = readdirSync(currentDir, { withFileTypes: true });
   for (const entry of entries) {
+    const childPath = path.join(currentDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Refusing to operate on symbolic link inside managed directory: ${childPath}`);
+    }
     if (entry.isDirectory()) {
-      const childDir = assertInsideDir(skillsRootDir, path.join(currentDir, entry.name));
+      const childDir = assertInsideDir(skillsRootDir, childPath);
       pruneEmptyDirsRecursive(skillsRootDir, childDir);
     }
   }
@@ -210,6 +297,9 @@ export function syncTools(
   }
 
   const resolvedRoot = path.resolve(rootDir);
+  const targets = target === 'all' ? [...SUPPORTED_TARGETS] : [target];
+  assertManagedDirsSafe(resolvedRoot, targets);
+
   const agentsDir = path.join(resolvedRoot, '.agents', 'agents');
   const skillsDir = path.join(resolvedRoot, '.agents', 'skills');
 
@@ -220,7 +310,6 @@ export function syncTools(
     throw new Error(`Missing source skills directory: ${skillsDir}`);
   }
 
-  const targets = target === 'all' ? [...SUPPORTED_TARGETS] : [target];
   const agentFiles = readdirSync(agentsDir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -277,6 +366,10 @@ export function syncTools(
     for (const skillFile of skillFiles) {
       addPlannedFile(`${toolDir}/skills/${skillFile.relPath}`, skillFile.content);
     }
+
+    if (currentTarget === 'cursor') {
+      addPlannedFile('.cursor/rules/orchestrator.mdc', renderCursorOrchestratorRule());
+    }
   }
 
   const files = plannedEntries.map((entry) => entry.posixRel);
@@ -290,6 +383,7 @@ export function syncTools(
   if (check) {
     const drifted = [];
     for (const entry of plannedEntries) {
+      assertNotSymlinkFile(entry.absPath);
       if (!existsSync(entry.absPath) || !readFileSync(entry.absPath).equals(entry.buffer)) {
         drifted.push(entry.posixRel);
       }
@@ -308,12 +402,16 @@ export function syncTools(
 
   if (!dryRun) {
     for (const entry of plannedEntries) {
-      mkdirSync(path.dirname(entry.absPath), { recursive: true });
+      const parentDir = path.dirname(entry.absPath);
+      assertNotSymlinkDir(parentDir);
+      assertNotSymlinkFile(entry.absPath);
+      mkdirSync(parentDir, { recursive: true });
       writeFileSync(entry.absPath, entry.buffer);
     }
 
     if (clean) {
       for (const item of staleItems) {
+        assertNotSymlinkFile(item.absPath);
         unlinkSync(item.absPath);
       }
       for (const currentTarget of targets) {

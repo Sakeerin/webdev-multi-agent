@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -20,6 +21,7 @@ import {
   renderCodexToml,
   syncTools,
 } from './sync-tools.mjs';
+import { parseFrontmatter } from './validate-agents.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -47,12 +49,16 @@ describe('mapClaudeTools', () => {
 });
 
 describe('renderCodexToml', () => {
-  it('renders valid TOML fields and escapes backslashes and triple quotes', () => {
+  it('renders valid TOML fields, rewrites ../skills/ links, and escapes backslashes and triple quotes', () => {
     const toml = renderCodexToml({
       name: 'web-dev',
       description: 'Builds "375px" mobile-first UI in C:\\projects.',
       skills: ['frontend-ui-engineering', 'impeccable'],
-      body: '# Web Dev\nUse C:\\src\\app and """quoted""" safely.',
+      body: [
+        '# Web Dev',
+        'Use C:\\src\\app and """quoted""" safely.',
+        'Read [UI skill](../skills/frontend-ui-engineering/SKILL.md) and [TDD](<../skills/tdd/SKILL.md>).',
+      ].join('\n'),
     });
 
     assert.match(toml, /^name = "web-dev"/m);
@@ -62,6 +68,9 @@ describe('renderCodexToml', () => {
     assert.ok(toml.includes('C:\\\\src\\\\app'));
     assert.equal(toml.includes('"""quoted"""'), false);
     assert.ok(toml.includes('\\"\\"\\"quoted\\"\\"\\"'));
+    assert.ok(toml.includes('](../../.agents/skills/frontend-ui-engineering/SKILL.md)'));
+    assert.ok(toml.includes('](<../../.agents/skills/tdd/SKILL.md>)'));
+    assert.equal(toml.includes('../skills/frontend-ui-engineering'), false);
   });
 });
 
@@ -108,9 +117,19 @@ describe('syncTools', () => {
       path.join(dir, '.claude', 'agents', 'security-auditor.md'),
       'utf8'
     );
+    assert.match(auditorContent, /^name: "security-auditor"$/m);
+    assert.match(auditorContent, /^  - "security-and-hardening"$/m);
     assert.match(auditorContent, /^tools: Read, Glob, Grep, Bash$/m);
     assert.equal(auditorContent.includes('Write'), false);
     assert.equal(auditorContent.includes('Edit'), false);
+
+    const parsedAuditor = parseFrontmatter(auditorContent);
+    assert.equal(parsedAuditor.ok, true);
+    assert.equal(parsedAuditor.data.name, 'security-auditor');
+    assert.deepEqual(parsedAuditor.data.skills, [
+      'security-and-hardening',
+      'firebase-security-rules-auditor',
+    ]);
 
     assert.equal(
       existsSync(path.join(dir, '.claude', 'skills', 'frontend-ui-engineering', 'SKILL.md')),
@@ -124,7 +143,7 @@ describe('syncTools', () => {
     );
   });
 
-  it('syncs agents and skills for --target=cursor and --target=gemini', () => {
+  it('syncs agents, skills, and .cursor/rules/orchestrator.mdc for --target=cursor and --target=gemini', () => {
     const cursorDir = createTempWorkspace();
     const cursorRes = syncTools(cursorDir, { target: 'cursor' });
     assert.deepEqual(cursorRes.targets, ['cursor']);
@@ -137,11 +156,34 @@ describe('syncTools', () => {
       true
     );
 
+    const orchestratorMdcPath = path.join(cursorDir, '.cursor', 'rules', 'orchestrator.mdc');
+    assert.equal(existsSync(orchestratorMdcPath), true);
+    const mdcRaw = readFileSync(orchestratorMdcPath, 'utf8');
+    assert.ok(mdcRaw.includes('<!-- Generated from AGENTS.md by scripts/sync-tools.mjs -->'));
+    assert.match(mdcRaw, /^alwaysApply: true$/m);
+    assert.match(mdcRaw, /^globs:/m);
+    assert.ok(mdcRaw.includes('[AGENTS.md](../../AGENTS.md)'));
+
+    // Verify .cursor/rules/keep.mdc is preserved under target: 'cursor', clean: true
+    const keepMdcPath = path.join(cursorDir, '.cursor', 'rules', 'keep.mdc');
+    writeFileSync(keepMdcPath, '# User Rule\n', 'utf8');
+    const cursorCleanRes = syncTools(cursorDir, { target: 'cursor', clean: true });
+    assert.deepEqual(cursorCleanRes.removed, []);
+    assert.equal(existsSync(keepMdcPath), true);
+
+    // Verify check: true detects drift on .cursor/rules/orchestrator.mdc while ignoring keep.mdc
+    writeFileSync(orchestratorMdcPath, '# Drifted rule\n', 'utf8');
+    const cursorCheckRes = syncTools(cursorDir, { target: 'cursor', check: true });
+    assert.equal(cursorCheckRes.inSync, false);
+    assert.deepEqual(cursorCheckRes.drifted, ['.cursor/rules/orchestrator.mdc']);
+    assert.deepEqual(cursorCheckRes.stale, []);
+
     const geminiDir = createTempWorkspace();
     const geminiRes = syncTools(geminiDir, { target: 'gemini' });
     assert.deepEqual(geminiRes.targets, ['gemini']);
     assert.equal(existsSync(path.join(geminiDir, '.gemini', 'agents', 'devops.md')), true);
     assert.equal(existsSync(path.join(geminiDir, '.gemini', 'skills', 'impeccable', 'SKILL.md')), true);
+    assert.equal(existsSync(path.join(geminiDir, '.gemini', 'rules')), false);
   });
 
   it('syncs .codex/agents/*.toml for --target=codex without duplicating skills', () => {
@@ -302,5 +344,49 @@ describe('syncTools', () => {
       { encoding: 'utf8' }
     );
     assert.equal(cliPass.status, 0);
+  });
+
+  it('rejects symlinked target root or managed subdirectories before reading or writing', () => {
+    const externalDir = mkdtempSync(path.join(os.tmpdir(), 'sync-tools-external-'));
+    tempDirs.push(externalDir);
+
+    const dir = createTempWorkspace();
+    let createdLink = false;
+    try {
+      symlinkSync(
+        externalDir,
+        path.join(dir, '.claude'),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      );
+      createdLink = true;
+    } catch (err) {
+      if (err?.code !== 'EPERM' && err?.code !== 'EACCES') {
+        throw err;
+      }
+    }
+
+    if (createdLink) {
+      assert.throws(() => syncTools(dir, { target: 'claude' }), /symbolic link.*\.claude/i);
+    }
+
+    const cursorDir = createTempWorkspace();
+    mkdirSync(path.join(cursorDir, '.cursor'), { recursive: true });
+    let createdRulesLink = false;
+    try {
+      symlinkSync(
+        externalDir,
+        path.join(cursorDir, '.cursor', 'rules'),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      );
+      createdRulesLink = true;
+    } catch (err) {
+      if (err?.code !== 'EPERM' && err?.code !== 'EACCES') {
+        throw err;
+      }
+    }
+
+    if (createdRulesLink) {
+      assert.throws(() => syncTools(cursorDir, { target: 'cursor' }), /symbolic link.*rules/i);
+    }
   });
 });
